@@ -29,11 +29,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+    // Track editor selection changes to display active context indicator in Webview
+    const selectionDisposable = vscode.window.onDidChangeTextEditorSelection(() => this.sendSelectionUpdate());
+    const editorDisposable = vscode.window.onDidChangeActiveTextEditor(() => this.sendSelectionUpdate());
+
+    webviewView.onDidDispose(() => {
+      selectionDisposable.dispose();
+      editorDisposable.dispose();
+    });
+
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.type) {
         case 'getModels':
           this.sendModelsToWebview();
           this.sendUpdateStatus();
+          this.sendSelectionUpdate();
           break;
 
         case 'selectModel':
@@ -77,6 +87,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private sendSelectionUpdate() {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && !editor.selection.isEmpty) {
+      const text = editor.document.getText(editor.selection);
+      this._view?.webview.postMessage({
+        type: 'selectionUpdate',
+        hasSelection: true,
+        fileName: editor.document.fileName.split(/[\\/]/).pop(),
+        lineCount: text.split('\n').length
+      });
+    } else {
+      this._view?.webview.postMessage({
+        type: 'selectionUpdate',
+        hasSelection: false
+      });
+    }
+  }
+
   private getModelsFromConfig(): any[] {
     return vscode.workspace.getConfiguration('localLlm').get<any[]>('models') || [];
   }
@@ -107,9 +135,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const editor = vscode.window.activeTextEditor;
+    let enrichedMessages = [...messages];
+    let attachedContext: any = null;
+
+    // If there is highlighted code, inject it as context into the prompt
+    if (editor && !editor.selection.isEmpty) {
+      const doc = editor.document;
+      const selectionText = doc.getText(editor.selection);
+      const fileName = doc.fileName.split(/[\\/]/).pop() || '';
+      const languageId = doc.languageId;
+
+      attachedContext = {
+        fileName,
+        code: selectionText,
+        lineCount: selectionText.split('\n').length
+      };
+
+      const lastIdx = enrichedMessages.length - 1;
+      if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+        const originalContent = enrichedMessages[lastIdx].content;
+        enrichedMessages[lastIdx].content = `[Context from file: "${fileName}"]\n\`\`\`${languageId}\n${selectionText}\n\`\`\`\n\nQuestion:\n${originalContent}`;
+      }
+    }
+
+    // Let the webview know if context was attached so it can render a file tag in the message bubble
+    this._view?.webview.postMessage({
+      type: 'messageContextAttached',
+      context: attachedContext
+    });
+
     const port = this.serverController.getPort();
     const postData = JSON.stringify({
-      messages,
+      messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
       max_tokens: 2048
@@ -224,10 +282,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <div class="welcome-message">
               <h3>Local LLM Sidebar Chat</h3>
               <p>Choose a model from the dropdown above. The extension will automatically spawn the llama-server command in your VS Code terminal and connect to it.</p>
+              <p style="font-size: 11px; margin-top: 10px; color: var(--accent-color);">💡 Tip: Highlight any code in your editor to automatically attach it to your prompts!</p>
             </div>
           </div>
 
           <div class="input-area">
+            <!-- Active selection indicator -->
+            <div id="selection-bar" class="selection-bar hidden">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              <span id="selection-text">Attached: index.ts (10 lines)</span>
+            </div>
+
             <textarea id="chat-input" placeholder="Type a message..." rows="1" disabled></textarea>
             <div class="action-buttons">
               <button class="clear-btn" id="clear-btn" title="Clear Chat">

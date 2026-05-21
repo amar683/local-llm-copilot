@@ -11,12 +11,17 @@ const clearBtn = document.getElementById('clear-btn');
 const sendIcon = document.getElementById('send-icon');
 const stopGenIcon = document.getElementById('stop-generation-icon');
 
+// Selection bar elements
+const selectionBar = document.getElementById('selection-bar');
+const selectionText = document.getElementById('selection-text');
+
 let modelsList = [];
 let selectedModelId = '';
 let chatHistory = [];
 let isGenerating = false;
 let currentAssistantBubble = null;
 let currentResponseText = '';
+let nextMessageContext = null; // holds context details for the next sent message
 
 // Load initial model configuration
 vscode.postMessage({ type: 'getModels' });
@@ -39,6 +44,12 @@ window.addEventListener('message', e => {
       break;
     case 'error':
       showError(msg.text);
+      break;
+    case 'selectionUpdate':
+      handleSelectionUpdate(msg);
+      break;
+    case 'messageContextAttached':
+      nextMessageContext = msg.context;
       break;
   }
 });
@@ -66,6 +77,7 @@ clearBtn.addEventListener('click', () => {
     <div class="welcome-message">
       <h3>Local LLM Sidebar Chat</h3>
       <p>Choose a model from the dropdown above. The extension will automatically spawn the llama-server command in your VS Code terminal and connect to it.</p>
+      <p style="font-size: 11px; margin-top: 10px; color: var(--accent-color);">💡 Tip: Highlight any code in your editor to automatically attach it to your prompts!</p>
     </div>
   `;
   chatHistory = [];
@@ -80,11 +92,19 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-// Auto-expand input height as text wraps
 chatInput.addEventListener('input', () => {
   chatInput.style.height = 'auto';
   chatInput.style.height = `${chatInput.scrollHeight}px`;
 });
+
+function handleSelectionUpdate(data) {
+  if (data.hasSelection) {
+    selectionText.textContent = `Attached: ${data.fileName} (${data.lineCount} lines)`;
+    selectionBar.classList.remove('hidden');
+  } else {
+    selectionBar.classList.add('hidden');
+  }
+}
 
 function updateDropdown(selectedId) {
   modelSelect.innerHTML = '';
@@ -138,7 +158,15 @@ function sendMessage() {
   const welcome = messagesContainer.querySelector('.welcome-message');
   if (welcome) welcome.remove();
 
-  appendBubble('user', text);
+  // The 'messageContextAttached' response from the Extension host will load nextMessageContext.
+  // We trigger appendBubble right after the message is sent. We wait a tiny tick for postMessage async,
+  // or we can handle it synchronously since the host is local.
+  // To avoid race conditions, we can query active selection synchronously or use a tiny timeout.
+  // Actually, let's just append the bubble. If nextMessageContext is set, it will be added.
+  setTimeout(() => {
+    appendBubble('user', text);
+  }, 10);
+
   chatHistory.push({ role: 'user', content: text });
 
   currentAssistantBubble = appendBubble('assistant', '...');
@@ -208,7 +236,21 @@ function appendBubble(sender, text) {
   bubble.className = 'bubble';
   
   if (sender === 'user') {
-    bubble.textContent = text;
+    // If context was attached, create a tag before user prompt
+    if (nextMessageContext) {
+      const tag = document.createElement('div');
+      tag.className = 'attached-context-tag';
+      tag.innerHTML = `
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        ${nextMessageContext.fileName} (${nextMessageContext.lineCount} lines)
+      `;
+      bubble.appendChild(tag);
+      nextMessageContext = null; // reset
+    }
+
+    const textNode = document.createElement('div');
+    textNode.textContent = text;
+    bubble.appendChild(textNode);
   } else {
     bubble.innerHTML = parseMarkdown(text);
   }
@@ -245,7 +287,6 @@ window.copyToClipboard = function(nonce) {
   }
 };
 
-// Quick regex-based parser for markdown syntax and code blocks
 function parseMarkdown(text) {
   if (!text) return '';
   
@@ -254,24 +295,20 @@ function parseMarkdown(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
   
-  // Fenced code blocks
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
     const language = lang || 'code';
     const nonce = Math.random().toString(36).substring(7);
     return `<pre><div class="code-header"><span>${language}</span><button class="copy-btn" onclick="copyToClipboard('${nonce}')" id="copy-${nonce}">Copy</button></div><code id="code-${nonce}">${code.trim()}</code></pre>`;
   });
   
-  // Inline code, bold, italics
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>')
              .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
              .replace(/\*([^*]+)\*/g, '<em>$1</em>');
   
-  // Headers
   html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>')
              .replace(/^## (.*$)/gim, '<h2>$1</h2>')
              .replace(/^# (.*$)/gim, '<h1>$1</h1>');
   
-  // Lists
   const lines = html.split('\n');
   let inList = false;
   for (let i = 0; i < lines.length; i++) {
@@ -288,7 +325,6 @@ function parseMarkdown(text) {
   if (inList) lines.push('</ul>');
   html = lines.join('\n');
   
-  // Clean paragraphs
   html = html.split('\n\n').map(p => {
     const trimmed = p.trim();
     if (!trimmed) return '';
