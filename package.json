@@ -1,0 +1,130 @@
+{
+  "name": "local-llm-sidebar-chat",
+  "displayName": "Local LLM Sidebar Chat",
+  "description": "Start local llama.cpp servers directly from VS Code and chat with them in a premium sidebar interface.",
+  "version": "0.1.0",
+  "publisher": "amardeeptomar",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Productivity",
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "local-llm-chat-container",
+          "title": "Local LLM",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "local-llm-chat-container": [
+        {
+          "type": "webview",
+          "id": "localLlmChatView",
+          "name": "Local LLM Chat",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "localLlm.startServer",
+        "title": "Local LLM: Start Server for Model",
+        "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.stopServer",
+        "title": "Local LLM: Stop Active Server",
+        "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.clearChat",
+        "title": "Local LLM: Clear Chat History",
+        "category": "Local LLM"
+      }
+    ],
+    "configuration": {
+      "title": "Local LLM Sidebar Chat",
+      "properties": {
+        "localLlm.models": {
+          "type": "array",
+          "markdownDescription": "Configure the local models and the shell commands used to start their llama-server processes.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique ID for the model (e.g. ai3b, ai8b)"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name of the model in the chat panel UI"
+              },
+              "command": {
+                "type": "string",
+                "description": "Shell command to run in the terminal to start the server (e.g. cd '/path/to/llama.cpp' && ./build-release/bin/llama-server -m ~/models/...gguf -ngl 99 --port 8080)"
+              },
+              "port": {
+                "type": "number",
+                "default": 8080,
+                "description": "The port number on which llama-server listens"
+              }
+            },
+            "required": ["id", "name", "command", "port"]
+          },
+          "default": [
+            {
+              "id": "aicoder",
+              "name": "Qwen 2.5 Coder 7B (Release)",
+              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080 -c 8192",
+              "port": 8080
+            },
+            {
+              "id": "ai3b",
+              "name": "Llama 3.2 3B (Release)",
+              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
+              "port": 8080
+            },
+            {
+              "id": "ai8b",
+              "name": "Llama 3.1 8B (Release)",
+              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
+              "port": 8080
+            },
+            {
+              "id": "ai3b-dev",
+              "name": "Llama 3.2 3B (Dev)",
+              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build/bin/llama-server -m ~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
+              "port": 8080
+            },
+            {
+              "id": "ai8b-dev",
+              "name": "Llama 3.1 8B (Dev)",
+              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build/bin/llama-server -m ~/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
+              "port": 8080
+            }
+          ]
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^18.17.1",
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.18.11",
+    "typescript": "^5.1.6"
+  }
+}
