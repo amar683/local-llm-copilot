@@ -29,13 +29,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-    // Track editor selection changes to display active context indicator in Webview
-    const selectionDisposable = vscode.window.onDidChangeTextEditorSelection(() => this.sendSelectionUpdate());
-    const editorDisposable = vscode.window.onDidChangeActiveTextEditor(() => this.sendSelectionUpdate());
+    // Track editor and workspace changes to display active context indicators in Webview
+    const selectionDisposable = vscode.window.onDidChangeTextEditorSelection(() => this.sendContextUpdate());
+    const editorDisposable = vscode.window.onDidChangeActiveTextEditor(() => this.sendContextUpdate());
+    const workspaceDisposable = vscode.workspace.onDidChangeWorkspaceFolders(() => this.sendContextUpdate());
 
     webviewView.onDidDispose(() => {
       selectionDisposable.dispose();
       editorDisposable.dispose();
+      workspaceDisposable.dispose();
     });
 
     webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -43,7 +45,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'getModels':
           this.sendModelsToWebview();
           this.sendUpdateStatus();
-          this.sendSelectionUpdate();
+          this.sendContextUpdate();
           break;
 
         case 'selectModel':
@@ -73,7 +75,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case 'sendMessage':
-          this.handleSendMessage(data.messages);
+          this.handleSendMessage(data.messages, data.includeActiveFile, data.includeWorkspaceMap);
           break;
 
         case 'abortMessage':
@@ -87,20 +89,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private sendSelectionUpdate() {
+  private sendContextUpdate() {
     const editor = vscode.window.activeTextEditor;
-    if (editor && !editor.selection.isEmpty) {
-      const text = editor.document.getText(editor.selection);
+    const hasWorkspace = !!(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
+    const workspaceName = hasWorkspace ? vscode.workspace.workspaceFolders![0].name : '';
+
+    if (editor) {
+      const isSelectionEmpty = editor.selection.isEmpty;
+      const fileName = editor.document.fileName.split(/[\\/]/).pop() || '';
+      const activeFileLineCount = editor.document.lineCount;
+      const selectionLineCount = isSelectionEmpty ? 0 : editor.document.getText(editor.selection).split('\n').length;
+      
       this._view?.webview.postMessage({
-        type: 'selectionUpdate',
-        hasSelection: true,
-        fileName: editor.document.fileName.split(/[\\/]/).pop(),
-        lineCount: text.split('\n').length
+        type: 'contextUpdate',
+        hasSelection: !isSelectionEmpty,
+        selectionFileName: fileName,
+        selectionLineCount,
+        hasActiveFile: true,
+        activeFileName: fileName,
+        activeFileLineCount,
+        hasWorkspace,
+        workspaceName
       });
     } else {
       this._view?.webview.postMessage({
-        type: 'selectionUpdate',
-        hasSelection: false
+        type: 'contextUpdate',
+        hasSelection: false,
+        hasActiveFile: false,
+        hasWorkspace,
+        workspaceName
       });
     }
   }
@@ -126,7 +143,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private handleSendMessage(messages: any[]) {
+  private async handleSendMessage(messages: any[], includeActiveFile: boolean, includeWorkspaceMap: boolean) {
     if (this.currentServerStatus !== 'ready') {
       this._view?.webview.postMessage({
         type: 'error',
@@ -139,7 +156,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let enrichedMessages = [...messages];
     let attachedContext: any = null;
 
-    // If there is highlighted code, inject it as context into the prompt
+    // 1. Check if there is highlighted code (this takes priority over full file)
     if (editor && !editor.selection.isEmpty) {
       const doc = editor.document;
       const selectionText = doc.getText(editor.selection);
@@ -147,8 +164,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const languageId = doc.languageId;
 
       attachedContext = {
+        type: 'selection',
         fileName,
-        code: selectionText,
         lineCount: selectionText.split('\n').length
       };
 
@@ -157,12 +174,57 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const originalContent = enrichedMessages[lastIdx].content;
         enrichedMessages[lastIdx].content = `[Context from file: "${fileName}"]\n\`\`\`${languageId}\n${selectionText}\n\`\`\`\n\nQuestion:\n${originalContent}`;
       }
+    } else if (includeActiveFile && editor) {
+      // 2. Full active file context
+      const doc = editor.document;
+      let fileText = doc.getText();
+      const fileName = doc.fileName.split(/[\\/]/).pop() || '';
+      const languageId = doc.languageId;
+      const originalLines = doc.lineCount;
+      let isTruncated = false;
+
+      // Truncate to first 1000 lines to prevent context bloat
+      if (originalLines > 1000) {
+        fileText = fileText.split('\n').slice(0, 1000).join('\n') + `\n\n// [... truncated remaining ${originalLines - 1000} lines for context limits ...]`;
+        isTruncated = true;
+      }
+
+      attachedContext = {
+        type: 'file',
+        fileName,
+        lineCount: isTruncated ? 1000 : originalLines,
+        isTruncated
+      };
+
+      const lastIdx = enrichedMessages.length - 1;
+      if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+        const originalContent = enrichedMessages[lastIdx].content;
+        enrichedMessages[lastIdx].content = `[Context of full open file: "${fileName}"]\n\`\`\`${languageId}\n${fileText}\n\`\`\`\n\nQuestion:\n${originalContent}`;
+      }
     }
 
-    // Let the webview know if context was attached so it can render a file tag in the message bubble
+    // 3. Include Workspace File List if enabled and folder is open
+    let workspaceMapAttached = false;
+    if (includeWorkspaceMap) {
+      const workspacePaths = await this.getWorkspaceFiles();
+      if (workspacePaths.length > 0) {
+        workspaceMapAttached = true;
+        const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Project';
+        const fileListStr = workspacePaths.map(p => `- ${p}`).join('\n');
+        
+        const lastIdx = enrichedMessages.length - 1;
+        if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+          const originalContent = enrichedMessages[lastIdx].content;
+          enrichedMessages[lastIdx].content = `[Workspace files list for project "${workspaceName}"]:\n${fileListStr}\n\n${originalContent}`;
+        }
+      }
+    }
+
+    // Let the webview know what context was attached
     this._view?.webview.postMessage({
       type: 'messageContextAttached',
-      context: attachedContext
+      context: attachedContext,
+      workspaceMapAttached
     });
 
     const port = this.serverController.getPort();
@@ -287,6 +349,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           </div>
 
           <div class="input-area">
+            <!-- Context toggles -->
+            <div class="context-toggles">
+              <button class="context-toggle-btn" id="toggle-active-file" title="Attach full active file" disabled>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span id="active-file-label">No Active File</span>
+              </button>
+              <button class="context-toggle-btn" id="toggle-workspace" title="Attach list of files in project" disabled>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 3px;"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                <span id="workspace-label">No Workspace</span>
+              </button>
+            </div>
+
             <!-- Active selection indicator -->
             <div id="selection-bar" class="selection-bar hidden">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -309,6 +383,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>`;
+  }
+
+  private async getWorkspaceFiles(): Promise<string[]> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      return [];
+    }
+
+    // Exclude node_modules, .git, binary media files, gguf models, and common zip folders
+    const excludePattern = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/.vscode/**,**/*.vsix,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.svg,**/*.gguf,**/*.zip,**/*.tar.gz}';
+    
+    try {
+      const uris = await vscode.workspace.findFiles('**/*', excludePattern, 150);
+      const paths = uris.map(uri => vscode.workspace.asRelativePath(uri));
+      return paths.sort();
+    } catch (e) {
+      return [];
+    }
   }
 }
 

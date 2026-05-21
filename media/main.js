@@ -15,6 +15,12 @@ const stopGenIcon = document.getElementById('stop-generation-icon');
 const selectionBar = document.getElementById('selection-bar');
 const selectionText = document.getElementById('selection-text');
 
+// Context toggle elements
+const toggleActiveFileBtn = document.getElementById('toggle-active-file');
+const activeFileLabel = document.getElementById('active-file-label');
+const toggleWorkspaceBtn = document.getElementById('toggle-workspace');
+const workspaceLabel = document.getElementById('workspace-label');
+
 let modelsList = [];
 let selectedModelId = '';
 let chatHistory = [];
@@ -22,6 +28,16 @@ let isGenerating = false;
 let currentAssistantBubble = null;
 let currentResponseText = '';
 let nextMessageContext = null; // holds context details for the next sent message
+let nextWorkspaceMapAttached = false; // holds workspace attachment flag
+
+// Toggle buttons event listeners
+toggleActiveFileBtn.addEventListener('click', () => {
+  toggleActiveFileBtn.classList.toggle('active');
+});
+
+toggleWorkspaceBtn.addEventListener('click', () => {
+  toggleWorkspaceBtn.classList.toggle('active');
+});
 
 // Load initial model configuration
 vscode.postMessage({ type: 'getModels' });
@@ -45,11 +61,12 @@ window.addEventListener('message', e => {
     case 'error':
       showError(msg.text);
       break;
-    case 'selectionUpdate':
-      handleSelectionUpdate(msg);
+    case 'contextUpdate':
+      handleContextUpdate(msg);
       break;
     case 'messageContextAttached':
       nextMessageContext = msg.context;
+      nextWorkspaceMapAttached = msg.workspaceMapAttached;
       break;
   }
 });
@@ -97,12 +114,46 @@ chatInput.addEventListener('input', () => {
   chatInput.style.height = `${chatInput.scrollHeight}px`;
 });
 
-function handleSelectionUpdate(data) {
+function handleContextUpdate(data) {
+  const hasActiveFile = data.hasActiveFile;
+  const activeFileName = data.activeFileName || '';
+  const hasWorkspace = data.hasWorkspace;
+  const workspaceName = data.workspaceName || '';
+
+  // Update active file button state
+  if (hasActiveFile) {
+    toggleActiveFileBtn.removeAttribute('disabled');
+    activeFileLabel.textContent = `File: ${activeFileName}`;
+    toggleActiveFileBtn.title = `Attach full file: ${activeFileName} (${data.activeFileLineCount} lines)`;
+  } else {
+    toggleActiveFileBtn.setAttribute('disabled', 'true');
+    toggleActiveFileBtn.classList.remove('active');
+    activeFileLabel.textContent = 'No Active File';
+    toggleActiveFileBtn.title = 'Attach full active file';
+  }
+
+  // Update workspace map button state
+  if (hasWorkspace) {
+    toggleWorkspaceBtn.removeAttribute('disabled');
+    workspaceLabel.textContent = `Map: ${workspaceName}`;
+    toggleWorkspaceBtn.title = `Attach files list for project: ${workspaceName}`;
+  } else {
+    toggleWorkspaceBtn.setAttribute('disabled', 'true');
+    toggleWorkspaceBtn.classList.remove('active');
+    workspaceLabel.textContent = 'No Workspace';
+    toggleWorkspaceBtn.title = 'Attach list of files in project';
+  }
+
+  // Handle selection indicator overlay
   if (data.hasSelection) {
-    selectionText.textContent = `Attached: ${data.fileName} (${data.lineCount} lines)`;
+    selectionText.textContent = `Attached selection: ${data.selectionFileName} (${data.selectionLineCount} lines)`;
     selectionBar.classList.remove('hidden');
+    // Visually mark active file button as overridden by selection context
+    toggleActiveFileBtn.classList.add('overridden');
+    toggleActiveFileBtn.title = `Highlight selection in ${activeFileName} takes priority over full file`;
   } else {
     selectionBar.classList.add('hidden');
+    toggleActiveFileBtn.classList.remove('overridden');
   }
 }
 
@@ -158,6 +209,9 @@ function sendMessage() {
   const welcome = messagesContainer.querySelector('.welcome-message');
   if (welcome) welcome.remove();
 
+  const includeActiveFile = toggleActiveFileBtn.classList.contains('active') && !toggleActiveFileBtn.disabled;
+  const includeWorkspaceMap = toggleWorkspaceBtn.classList.contains('active') && !toggleWorkspaceBtn.disabled;
+
   // The 'messageContextAttached' response from the Extension host will load nextMessageContext.
   // We trigger appendBubble right after the message is sent. We wait a tiny tick for postMessage async,
   // or we can handle it synchronously since the host is local.
@@ -181,7 +235,9 @@ function sendMessage() {
     messages: [
       { role: 'system', content: 'You are a helpful coding assistant running locally via llama.cpp. Keep code snippets clean and explain changes clearly.' },
       ...chatHistory
-    ]
+    ],
+    includeActiveFile,
+    includeWorkspaceMap
   });
 }
 
@@ -240,12 +296,30 @@ function appendBubble(sender, text) {
     if (nextMessageContext) {
       const tag = document.createElement('div');
       tag.className = 'attached-context-tag';
+      
+      const fileIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+      const selectionIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`;
+      
+      const icon = nextMessageContext.type === 'selection' ? selectionIcon : fileIcon;
+      const typeLabel = nextMessageContext.type === 'selection' ? 'selection' : 'file';
+      
       tag.innerHTML = `
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        ${nextMessageContext.fileName} (${nextMessageContext.lineCount} lines)
+        ${icon}
+        <span>${nextMessageContext.fileName} (${typeLabel}, ${nextMessageContext.lineCount} lines)</span>
       `;
       bubble.appendChild(tag);
       nextMessageContext = null; // reset
+    }
+
+    if (nextWorkspaceMapAttached) {
+      const tag = document.createElement('div');
+      tag.className = 'attached-context-tag';
+      tag.innerHTML = `
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span>Workspace Map</span>
+      `;
+      bubble.appendChild(tag);
+      nextWorkspaceMapAttached = false; // reset
     }
 
     const textNode = document.createElement('div');

@@ -310,6 +310,59 @@ body {
   gap: 8px;
 }
 
+/* Context attachment toggles */
+.context-toggles {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.context-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  outline: none;
+  font-weight: 500;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-toggle-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+.context-toggle-btn.active {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #c084fc;
+}
+
+.context-toggle-btn.overridden.active {
+  opacity: 0.6;
+  text-decoration: line-through;
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--border-color);
+  color: var(--text-muted);
+}
+
+.context-toggle-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
 #chat-input {
   width: 100%;
   box-sizing: border-box;
