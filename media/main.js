@@ -15,11 +15,20 @@ const stopGenIcon = document.getElementById('stop-generation-icon');
 const selectionBar = document.getElementById('selection-bar');
 const selectionText = document.getElementById('selection-text');
 
-// Context toggle elements
 const toggleActiveFileBtn = document.getElementById('toggle-active-file');
 const activeFileLabel = document.getElementById('active-file-label');
 const toggleWorkspaceBtn = document.getElementById('toggle-workspace');
 const workspaceLabel = document.getElementById('workspace-label');
+
+// Settings elements
+const settingsToggleBtn = document.getElementById('settings-toggle-btn');
+const settingsPanel = document.getElementById('settings-panel');
+const tempInput = document.getElementById('settings-temp');
+const tempVal = document.getElementById('settings-temp-val');
+const toppInput = document.getElementById('settings-topp');
+const toppVal = document.getElementById('settings-topp-val');
+const maxTokensInput = document.getElementById('settings-max-tokens');
+const systemPromptInput = document.getElementById('settings-system-prompt');
 
 let modelsList = [];
 let selectedModelId = '';
@@ -37,6 +46,19 @@ toggleActiveFileBtn.addEventListener('click', () => {
 
 toggleWorkspaceBtn.addEventListener('click', () => {
   toggleWorkspaceBtn.classList.toggle('active');
+});
+
+settingsToggleBtn.addEventListener('click', () => {
+  settingsToggleBtn.classList.toggle('active');
+  settingsPanel.classList.toggle('hidden');
+});
+
+tempInput.addEventListener('input', (e) => {
+  tempVal.textContent = parseFloat(e.target.value).toFixed(2);
+});
+
+toppInput.addEventListener('input', (e) => {
+  toppVal.textContent = parseFloat(e.target.value).toFixed(2);
 });
 
 // Load initial model configuration
@@ -230,6 +252,11 @@ function sendMessage() {
   sendIcon.classList.add('hidden');
   stopGenIcon.classList.remove('hidden');
 
+  const temperature = parseFloat(tempInput.value);
+  const maxTokens = parseInt(maxTokensInput.value, 10);
+  const topP = parseFloat(toppInput.value);
+  const systemPrompt = systemPromptInput.value;
+
   vscode.postMessage({
     type: 'sendMessage',
     messages: [
@@ -237,7 +264,11 @@ function sendMessage() {
       ...chatHistory
     ],
     includeActiveFile,
-    includeWorkspaceMap
+    includeWorkspaceMap,
+    temperature,
+    maxTokens,
+    topP,
+    systemPrompt
   });
 }
 

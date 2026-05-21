@@ -75,7 +75,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case 'sendMessage':
-          this.handleSendMessage(data.messages, data.includeActiveFile, data.includeWorkspaceMap);
+          this.handleSendMessage(
+            data.messages,
+            data.includeActiveFile,
+            data.includeWorkspaceMap,
+            data.temperature,
+            data.maxTokens,
+            data.topP,
+            data.systemPrompt
+          );
           break;
 
         case 'abortMessage':
@@ -143,7 +151,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleSendMessage(messages: any[], includeActiveFile: boolean, includeWorkspaceMap: boolean) {
+  private async handleSendMessage(
+    messages: any[],
+    includeActiveFile: boolean,
+    includeWorkspaceMap: boolean,
+    temperature?: number,
+    maxTokens?: number,
+    topP?: number,
+    systemPrompt?: string
+  ) {
     if (this.currentServerStatus !== 'ready') {
       this._view?.webview.postMessage({
         type: 'error',
@@ -154,6 +170,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     const editor = vscode.window.activeTextEditor;
     let enrichedMessages = [...messages];
+
+    if (systemPrompt && systemPrompt.trim()) {
+      if (enrichedMessages.length > 0 && enrichedMessages[0].role === 'system') {
+        enrichedMessages[0] = { role: 'system', content: systemPrompt.trim() };
+      } else {
+        enrichedMessages.unshift({ role: 'system', content: systemPrompt.trim() });
+      }
+    }
     let attachedContext: any = null;
 
     // 1. Check if there is highlighted code (this takes priority over full file)
@@ -231,8 +255,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const postData = JSON.stringify({
       messages: enrichedMessages,
       stream: true,
-      temperature: 0.7,
-      max_tokens: 2048
+      temperature: typeof temperature === 'number' ? temperature : 0.7,
+      max_tokens: typeof maxTokens === 'number' ? maxTokens : 2048,
+      ...(typeof topP === 'number' ? { top_p: topP } : {})
     });
 
     const options = {
@@ -337,6 +362,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <button class="stop-btn" id="stop-btn" title="Stop Server" style="display: none;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
               </button>
+              <button class="settings-toggle-btn" id="settings-toggle-btn" title="Generation Settings">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              </button>
+            </div>
+
+            <!-- Generation Settings Panel -->
+            <div class="settings-panel hidden" id="settings-panel">
+              <div class="settings-group">
+                <div class="settings-label-row">
+                  <label for="settings-temp">Temperature</label>
+                  <span class="settings-val-badge" id="settings-temp-val">0.70</span>
+                </div>
+                <input type="range" id="settings-temp" min="0.1" max="1.5" step="0.05" value="0.70">
+              </div>
+              
+              <div class="settings-group">
+                <div class="settings-label-row">
+                  <label for="settings-topp">Top-P</label>
+                  <span class="settings-val-badge" id="settings-topp-val">0.90</span>
+                </div>
+                <input type="range" id="settings-topp" min="0.1" max="1.0" step="0.05" value="0.90">
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-label-row">
+                  <label for="settings-max-tokens">Max Tokens</label>
+                </div>
+                <input type="number" id="settings-max-tokens" min="64" max="8192" step="64" value="2048">
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-label-row">
+                  <label for="settings-system-prompt">System Prompt Override</label>
+                </div>
+                <textarea id="settings-system-prompt" rows="2" placeholder="Custom instructions for the LLM (e.g. 'Answer in emojis')..."></textarea>
+              </div>
             </div>
           </div>
 
