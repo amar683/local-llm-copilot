@@ -638,7 +638,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         stream: true,
         temperature: typeof temperature === 'number' ? temperature : 0.7,
         max_tokens: typeof maxTokens === 'number' ? maxTokens : 2048,
-        ...(typeof topP === 'number' ? { top_p: topP } : {})
+        ...(typeof topP === 'number' ? { top_p: topP } : {}),
+        stream_options: { include_usage: true }
       };
 
       if (useTools) {
@@ -727,6 +728,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     }
                   }
                 }
+
+                if (parsed.usage) {
+                  const model = this.getModelsFromConfig().find(m => m.id === this.selectedModelId);
+                  this._view?.webview.postMessage({
+                    type: 'tokenUsage',
+                    usage: parsed.usage,
+                    contextSize: model?.contextSize || 4096
+                  });
+                }
               } catch {
                 // Ignore incomplete JSON chunks
               }
@@ -779,49 +789,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       </head>
       <body>
         <div class="chat-container">
-          <div class="header">
-            <div class="selector-wrapper">
-              <div class="header-title-row">
-                <label for="model-select">Active Model</label>
-                <button class="config-toggle-btn" id="config-toggle-btn" title="Model Setup">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                </button>
-              </div>
-              <select id="model-select">
-                <option value="" disabled selected>Loading models...</option>
-              </select>
-            </div>
-            
-            <div class="status-bar" id="status-bar">
-              <span class="status-indicator idle" id="status-indicator"></span>
-              <span class="status-text" id="status-text">Select a model to begin</span>
-              <button class="open-webui-btn" id="open-webui-btn" title="Open llama.cpp Web UI in Browser" style="display: none;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              </button>
-              <button class="stop-btn" id="stop-btn" title="Stop Server" style="display: none;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-              </button>
-              <button class="settings-toggle-btn" id="settings-toggle-btn" title="Generation Settings">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-              </button>
-            </div>
-
-            <!-- Server Info Panel -->
-            <div class="server-info-panel hidden" id="server-info-panel">
-              <div class="server-info-header" id="server-info-toggle">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-                <span>Server Info</span>
-                <svg class="server-info-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-              </div>
-              <div class="server-info-body hidden" id="server-info-body">
-                <div class="server-info-row"><span class="info-label">Model</span><span class="info-value" id="info-model">—</span></div>
-                <div class="server-info-row"><span class="info-label">Context</span><span class="info-value" id="info-ctx">—</span></div>
-                <div class="server-info-row"><span class="info-label">Chat Template</span><span class="info-value" id="info-template">—</span></div>
-              </div>
-            </div>
-
-            <!-- Generation Settings Panel -->
-            <div class="settings-panel hidden" id="settings-panel">
+          <!-- Generation Settings Panel (moved to top of chat-view temporarily or inside a modal-like layer, but let's just keep it absolute positioned or at the top of chat-view) -->
+          <div class="settings-panel hidden" id="settings-panel" style="position: absolute; top: 0; left: 0; right: 0; background: var(--bg-primary); z-index: 100; border-bottom: 1px solid var(--border-color); padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
               <div class="settings-group">
                 <div class="settings-label-row">
                   <label for="settings-temp">Temperature</label>
@@ -848,8 +817,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </div>
                 <textarea id="settings-system-prompt" rows="2" placeholder="Custom instructions for the LLM (e.g. 'Answer in emojis')..."></textarea>
               </div>
-            </div>
           </div>
+
 
           <!-- ═══ CONFIG VIEW ═══ -->
           <div class="config-view hidden" id="config-view">
@@ -977,6 +946,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </button>
                 </div>
               </div>
+            </div> <!-- closes input-area -->
+          </div> <!-- closes chat-view -->
+
+          <!-- Compact Footer -->
+          <div class="chat-footer">
+            <div class="footer-left" id="status-bar" title="Select a model to begin">
+              <span class="status-indicator idle" id="status-indicator"></span>
+              <select id="model-select" class="compact-select">
+                <option value="" disabled selected>Loading models...</option>
+              </select>
+              <button class="stop-btn" id="stop-btn" title="Stop Server" style="display: none;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+              </button>
+            </div>
+            <div class="footer-right">
+              <span class="context-usage" id="context-usage-label" style="display: none;" title="Context Usage">0 / 4096</span>
+              <button class="footer-btn" id="open-webui-btn" title="Open llama.cpp Web UI" style="display: none;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </button>
+              <button class="footer-btn" id="settings-toggle-btn" title="Settings">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              </button>
+              <button class="footer-btn config-toggle-btn" id="config-toggle-btn" title="Model Setup">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              </button>
             </div>
           </div>
         </div>

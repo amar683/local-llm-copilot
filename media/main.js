@@ -4,7 +4,6 @@ const vscode = acquireVsCodeApi();
 
 const modelSelect = document.getElementById('model-select');
 const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
 const stopBtn = document.getElementById('stop-btn');
 const messagesContainer = document.getElementById('messages-container');
 const chatInput = document.getElementById('chat-input');
@@ -34,12 +33,6 @@ const maxTokensInput = document.getElementById('settings-max-tokens');
 const systemPromptInput = document.getElementById('settings-system-prompt');
 
 const openWebUIBtn = document.getElementById('open-webui-btn');
-const serverInfoPanel = document.getElementById('server-info-panel');
-const serverInfoToggle = document.getElementById('server-info-toggle');
-const serverInfoBody = document.getElementById('server-info-body');
-const infoModel = document.getElementById('info-model');
-const infoCtx = document.getElementById('info-ctx');
-const infoTemplate = document.getElementById('info-template');
 const tokenCountBtn = document.getElementById('token-count-btn');
 const tokenCountLabel = document.getElementById('token-count-label');
 
@@ -102,11 +95,6 @@ toppInput.addEventListener('input', (e) => {
 
 openWebUIBtn.addEventListener('click', () => {
   vscode.postMessage({ type: 'openWebUI' });
-});
-
-serverInfoToggle.addEventListener('click', () => {
-  serverInfoBody.classList.toggle('hidden');
-  serverInfoToggle.classList.toggle('expanded');
 });
 
 tokenCountBtn.addEventListener('click', () => {
@@ -272,7 +260,7 @@ window.addEventListener('message', e => {
       nextWorkspaceMapAttached = msg.workspaceMapAttached;
       break;
     case 'serverProps':
-      handleServerProps(msg.props);
+      // Server props event intentionally ignored for now
       break;
     case 'tokenizeResult':
       handleTokenizeResult(msg.count);
@@ -282,6 +270,9 @@ window.addEventListener('message', e => {
       break;
     case 'toolCallResult':
       handleToolCallResult(msg);
+      break;
+    case 'tokenUsage':
+      handleTokenUsage(msg);
       break;
     case 'llamaCppPath':
       llamaCppPathInput.value = msg.path || '';
@@ -514,7 +505,9 @@ function updateDropdown(selectedId) {
 
 function updateStatus(status, text) {
   statusIndicator.className = `status-indicator ${status}`;
-  statusText.textContent = text;
+  if (text) {
+    statusIndicator.title = text;
+  }
 
   const isDisabled = status !== 'ready';
   chatInput.disabled = isDisabled;
@@ -523,9 +516,6 @@ function updateStatus(status, text) {
   stopBtn.style.display = isDisabled ? 'none' : 'flex';
   openWebUIBtn.style.display = isDisabled ? 'none' : 'flex';
 
-  if (isDisabled) {
-    serverInfoPanel.classList.add('hidden');
-  }
 }
 
 function sendMessage() {
@@ -541,9 +531,7 @@ function sendMessage() {
   const includeActiveFile = toggleActiveFileBtn.classList.contains('active') && !toggleActiveFileBtn.disabled;
   const includeWorkspaceMap = toggleWorkspaceBtn.classList.contains('active') && !toggleWorkspaceBtn.disabled;
 
-  setTimeout(() => {
-    appendBubble('user', text);
-  }, 10);
+  appendBubble('user', text);
 
   chatHistory.push({ role: 'user', content: text });
 
@@ -625,18 +613,23 @@ function handleToolCallStart(msg) {
   const argsPreview = formatToolArgs(msg.toolName, msg.toolArgs);
 
   block.innerHTML = `
-    <div class="tool-call-header executing">
-      <span class="tool-call-spinner"></span>
-      <span class="tool-call-icon">${toolIcon}</span>
-      <span class="tool-call-name">${msg.toolName}</span>
-      <span class="tool-call-status">executing...</span>
-    </div>
-    <div class="tool-call-args">
-      <div class="tool-call-args-toggle" onclick="toggleToolDetails(this)">
-        <svg class="tool-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-        <span>Arguments</span>
+    <div class="tool-call-header executing" onclick="toggleToolDetails(this)">
+      <div class="tool-call-status-icon"><span class="tool-call-spinner"></span></div>
+      <div class="tool-call-title">
+        <span class="tool-call-name">${msg.toolName}</span>
+        <span class="tool-call-args-inline">${escapeHtml(truncateOutput(argsPreview))}</span>
       </div>
-      <pre class="tool-call-args-content hidden"><code>${escapeHtml(argsPreview)}</code></pre>
+      <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+    </div>
+    <div class="tool-call-details hidden">
+      <div class="tool-detail-section">
+        <div class="tool-detail-label">Arguments</div>
+        <pre class="tool-call-args-content"><code>${escapeHtml(argsPreview)}</code></pre>
+      </div>
+      <div class="tool-detail-section tool-result-container hidden">
+        <div class="tool-detail-label">Result</div>
+        <pre class="tool-call-result-content"><code></code></pre>
+      </div>
     </div>
   `;
 
@@ -674,28 +667,22 @@ function handleToolCallResult(msg) {
     header.classList.remove('executing');
     header.classList.add(msg.denied ? 'denied' : msg.success ? 'success' : 'error');
     
-    const spinner = header.querySelector('.tool-call-spinner');
-    if (spinner) spinner.remove();
-
-    const statusIcon = msg.denied ? '🚫' : msg.success ? '✓' : '✗';
-    const statusLabel = msg.denied ? 'denied by user' : msg.success ? 'done' : 'failed';
-
-    const statusEl = header.querySelector('.tool-call-status');
-    if (statusEl) {
-      statusEl.innerHTML = `<span class="status-icon">${statusIcon}</span> ${statusLabel}`;
+    const iconContainer = header.querySelector('.tool-call-status-icon');
+    if (iconContainer) {
+      const statusIcon = msg.denied ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>' : 
+                         msg.success ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : 
+                         '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      iconContainer.innerHTML = statusIcon;
     }
   }
 
-  const resultSection = document.createElement('div');
-  resultSection.className = 'tool-call-result';
-  resultSection.innerHTML = `
-    <div class="tool-call-result-toggle" onclick="toggleToolDetails(this)">
-      <svg class="tool-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-      <span>Result</span>
-    </div>
-    <pre class="tool-call-result-content hidden"><code>${escapeHtml(truncateOutput(msg.output))}</code></pre>
-  `;
-  block.appendChild(resultSection);
+  const resultContainer = block.querySelector('.tool-result-container');
+  const resultContent = block.querySelector('.tool-call-result-content code');
+  
+  if (resultContainer && resultContent) {
+    resultContainer.classList.remove('hidden');
+    resultContent.innerHTML = escapeHtml(truncateOutput(msg.output));
+  }
   scrollToBottom();
 }
 
@@ -829,23 +816,7 @@ window.copyToClipboard = function(nonce) {
   }
 };
 
-function handleServerProps(props) {
-  if (!props) {
-    serverInfoPanel.classList.add('hidden');
-    infoModel.textContent = '—';
-    infoCtx.textContent = '—';
-    infoTemplate.textContent = '—';
-    return;
-  }
-  serverInfoPanel.classList.remove('hidden');
-  const modelName = props.default_generation_settings?.model || props.model || '—';
-  const shortModel = modelName.split('/').pop() || modelName;
-  infoModel.textContent = shortModel;
-  const ctxSize = props.default_generation_settings?.n_ctx || props.n_ctx || '—';
-  infoCtx.textContent = typeof ctxSize === 'number' ? `${ctxSize} tokens` : ctxSize;
-  const chatTemplate = props.chat_template || props.default_generation_settings?.chat_template || '—';
-  infoTemplate.textContent = chatTemplate.length > 30 ? chatTemplate.substring(0, 30) + '…' : chatTemplate;
-}
+
 
 function handleTokenizeResult(count) {
   if (count < 0) {
@@ -893,4 +864,21 @@ function parseMarkdown(text) {
     return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
   }).join('');
   return html;
+}
+// ─── Utility ───────────────────────────────────────────────────────────────
+
+function handleTokenUsage(msg) {
+  const usageLabel = document.getElementById('context-usage-label');
+  if (usageLabel && msg.usage) {
+    const total = msg.usage.prompt_tokens + msg.usage.completion_tokens;
+    usageLabel.textContent = `${total} / ${msg.contextSize} ctx`;
+    usageLabel.style.display = 'inline-flex';
+    if (total > msg.contextSize * 0.9) {
+      usageLabel.style.color = 'var(--status-error)';
+    } else if (total > msg.contextSize * 0.75) {
+      usageLabel.style.color = 'var(--status-starting)';
+    } else {
+      usageLabel.style.color = 'var(--text-muted)';
+    }
+  }
 }
