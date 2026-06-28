@@ -10,6 +10,16 @@ export interface ToolResult {
   output: string;
   /** Whether user confirmation was required and denied */
   denied?: boolean;
+  /** Whether the tool needs webview confirmation before applying */
+  needsConfirmation?: boolean;
+  /** The original file content (for undo) */
+  originalContent?: string;
+  /** The original URI being edited */
+  originalUri?: vscode.Uri;
+  /** Lines added for preview */
+  addedLines?: number;
+  /** Lines removed for preview */
+  removedLines?: number;
 }
 
 /**
@@ -129,30 +139,36 @@ async function handleWriteFile(workspaceRoot: string, filePath: string, content:
     exists = false;
   }
 
-  const action = exists ? 'overwrite' : 'create';
-  const confirmMsg = exists
-    ? `The AI wants to overwrite "${filePath}". Allow?`
-    : `The AI wants to create "${filePath}". Allow?`;
-
-  const choice = await vscode.window.showWarningMessage(
-    confirmMsg,
-    { modal: true, detail: `Content preview (first 200 chars):\n${content.substring(0, 200)}${content.length > 200 ? '...' : ''}` },
-    'Allow',
-    'Deny'
-  );
-
-  if (choice !== 'Allow') {
-    return { success: false, output: `User denied permission to ${action} file: ${filePath}`, denied: true };
-  }
+  // We no longer prompt the user with a modal box.
+  // The action will be previewed and confirmable inside the chat's worktree UI.
 
   const uri = vscode.Uri.file(absPath);
+  
+  // Read current content if it exists
+  let originalContent = '';
+  if (exists) {
+    try {
+      const existingData = await vscode.workspace.fs.readFile(uri);
+      originalContent = Buffer.from(existingData).toString('utf-8');
+    } catch {
+      originalContent = '';
+    }
+  }
+  
   const data = Buffer.from(content, 'utf-8');
   await vscode.workspace.fs.writeFile(uri, data);
 
-  const lineCount = content.split('\n').length;
+  const newLinesCount = content.split('\n').length;
+  const oldLinesCount = originalContent ? originalContent.split('\n').length : 0;
+
   return {
     success: true,
-    output: `Successfully ${exists ? 'overwrote' : 'created'} ${filePath} (${lineCount} lines, ${data.length} bytes)`
+    needsConfirmation: true, // Trigger the undo UI in chat
+    originalContent: originalContent, // Save for Reject
+    originalUri: uri,
+    addedLines: newLinesCount,
+    removedLines: oldLinesCount,
+    output: `Successfully ${exists ? 'overwrote' : 'created'} ${filePath} (${newLinesCount} lines, ${data.length} bytes)`
   };
 }
 
@@ -186,30 +202,22 @@ async function handleEditFile(workspaceRoot: string, filePath: string, search: s
   const secondIndex = currentContent.indexOf(search, index + 1);
   const multipleOccurrences = secondIndex !== -1;
 
-  // Ask for confirmation
-  const searchPreview = search.length > 100 ? search.substring(0, 100) + '...' : search;
-  const replacePreview = replace.length > 100 ? replace.substring(0, 100) + '...' : replace;
-  const detail = `Find:\n${searchPreview}\n\nReplace with:\n${replacePreview}${multipleOccurrences ? '\n\n⚠️ Multiple occurrences found — only the first will be replaced.' : ''}`;
-
-  const choice = await vscode.window.showWarningMessage(
-    `The AI wants to edit "${filePath}". Allow?`,
-    { modal: true, detail },
-    'Allow',
-    'Deny'
-  );
-
-  if (choice !== 'Allow') {
-    return { success: false, output: `User denied permission to edit file: ${filePath}`, denied: true };
-  }
-
-  // Perform the replacement (first occurrence only)
   const newContent = currentContent.substring(0, index) + replace + currentContent.substring(index + search.length);
   const data = Buffer.from(newContent, 'utf-8');
   await vscode.workspace.fs.writeFile(uri, data);
+  
+  // Calculate rough diff stats for the preview
+  const originalLines = search.split('\n').length;
+  const newLines = replace.split('\n').length;
 
   return {
-    success: true,
-    output: `Successfully edited ${filePath}. Replaced ${search.split('\n').length} lines with ${replace.split('\n').length} lines.${multipleOccurrences ? ' (Note: only first occurrence was replaced)' : ''}`
+    success: true, 
+    needsConfirmation: true, // Trigger the undo UI in chat
+    originalContent: currentContent, // Save for Reject
+    originalUri: uri,
+    addedLines: newLines,
+    removedLines: originalLines,
+    output: `Successfully edited ${filePath} (replaced ${search.length} bytes)`
   };
 }
 

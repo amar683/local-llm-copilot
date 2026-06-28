@@ -8,6 +8,13 @@ import { executeToolCall } from './toolExecutor';
 /** Maximum number of tool-call iterations per user turn */
 const MAX_TOOL_ITERATIONS = 10;
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  timestamp: number;
+  messages: any[];
+}
+
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'localLlmChatView';
   private _view?: vscode.WebviewView;
@@ -16,9 +23,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private selectedModelId = '';
   private activeRequest: http.ClientRequest | undefined;
   private abortRequested = false;
+  // Keyed by file path (fsPath), stores the original content before any edits in this turn.
+  private turnFileBackups: Map<string, { uri: vscode.Uri, originalContent: string, addedLines: number, removedLines: number }> = new Map();
+
+  private currentSessionId: string = '';
 
   constructor(
-    private readonly _extensionUri: vscode.Uri,
+    private readonly _context: vscode.ExtensionContext,
     private readonly serverController: ServerController
   ) {}
 
@@ -31,7 +42,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [this._extensionUri]
+      localResourceRoots: [this._context.extensionUri]
     };
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
@@ -54,6 +65,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.sendUpdateStatus();
           this.sendContextUpdate();
           this.sendLlamaCppPath();
+          this.sendSessionsToWebview();
+          break;
+
+        case 'getSessions':
+          this.sendSessionsToWebview();
+          break;
+
+        case 'saveSession':
+          this.saveSession(data.session);
+          break;
+
+        case 'deleteSession':
+          this.deleteSession(data.sessionId);
           break;
 
         case 'selectModel':
@@ -138,6 +162,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
+        case 'toolAction':
+          if (data.action === 'rejectAll') {
+            for (const backup of this.turnFileBackups.values()) {
+              await vscode.workspace.fs.writeFile(backup.uri, Buffer.from(backup.originalContent, 'utf-8'));
+            }
+            this.turnFileBackups.clear();
+            this._view?.webview.postMessage({ type: 'turnActionComplete', action: 'rejectAll' });
+          } else if (data.action === 'acceptAll') {
+            this.turnFileBackups.clear();
+            this._view?.webview.postMessage({ type: 'turnActionComplete', action: 'acceptAll' });
+          } else if (data.action === 'reviewFile' && data.filePath) {
+            const backup = this.turnFileBackups.get(data.filePath);
+            if (backup) {
+              const os = require('os');
+              const path = require('path');
+              const tempPath = path.join(os.tmpdir(), `local-llm-original-${Date.now()}-${path.basename(backup.uri.fsPath)}`);
+              const tempUri = vscode.Uri.file(tempPath);
+              await vscode.workspace.fs.writeFile(tempUri, Buffer.from(backup.originalContent, 'utf-8'));
+              await vscode.commands.executeCommand('vscode.diff', tempUri, backup.uri, `Review: ${path.basename(backup.uri.fsPath)}`);
+            }
+          }
+          break;
+
         // ─── Setup / Config Messages ─────────────────────────────────
         case 'getLlamaCppPath':
           this.sendLlamaCppPath();
@@ -171,6 +218,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   // ─── Setup / Config Handlers ─────────────────────────────────────────────
+
+  private getSessions(): ChatSession[] {
+    return this._context.globalState.get<ChatSession[]>('localLlm.sessions') || [];
+  }
+
+  private sendSessionsToWebview() {
+    this._view?.webview.postMessage({
+      type: 'sessionsList',
+      sessions: this.getSessions()
+    });
+  }
+
+  private saveSession(session: ChatSession) {
+    const sessions = this.getSessions();
+    const existingIndex = sessions.findIndex(s => s.id === session.id);
+    if (existingIndex >= 0) {
+      sessions[existingIndex] = session;
+    } else {
+      sessions.unshift(session);
+    }
+    this._context.globalState.update('localLlm.sessions', sessions);
+    this.sendSessionsToWebview();
+  }
+
+  private deleteSession(sessionId: string) {
+    const sessions = this.getSessions();
+    const newSessions = sessions.filter(s => s.id !== sessionId);
+    this._context.globalState.update('localLlm.sessions', newSessions);
+    this.sendSessionsToWebview();
+  }
 
   private sendLlamaCppPath() {
     const llamaCppPath = vscode.workspace.getConfiguration('localLlm').get<string>('llamaCppPath') || '';
@@ -427,6 +504,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.abortRequested = false;
+    this.turnFileBackups.clear();
     const useTools = enableTools && this.isToolsEnabledForModel();
 
     const editor = vscode.window.activeTextEditor;
@@ -546,6 +624,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       iteration++;
+      this._view?.webview.postMessage({ type: 'streamStart' });
       const result = await this.streamChatCompletion(messages, temperature, maxTokens, topP, true);
 
       if (!result) return;
@@ -583,7 +662,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             callId: toolCall.id
           });
 
-          const toolResult = await executeToolCall(funcName, funcArgs);
+          let toolResult = await executeToolCall(funcName, funcArgs);
+
+          if (toolResult.needsConfirmation && toolResult.originalContent && toolResult.originalUri) {
+            const fsPath = toolResult.originalUri.fsPath;
+            if (this.turnFileBackups.has(fsPath)) {
+              // File was already edited this turn, just update the cumulative stats
+              const backup = this.turnFileBackups.get(fsPath)!;
+              backup.addedLines += toolResult.addedLines || 0;
+              backup.removedLines += toolResult.removedLines || 0;
+            } else {
+              // First time edited this turn, store original state
+              this.turnFileBackups.set(fsPath, {
+                uri: toolResult.originalUri,
+                originalContent: toolResult.originalContent,
+                addedLines: toolResult.addedLines || 0,
+                removedLines: toolResult.removedLines || 0
+              });
+            }
+          }
 
           this._view?.webview.postMessage({
             type: 'toolCallResult',
@@ -591,7 +688,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             callId: toolCall.id,
             success: toolResult.success,
             output: toolResult.output,
-            denied: toolResult.denied
+            denied: toolResult.denied,
+            addedLines: toolResult.addedLines,
+            removedLines: toolResult.removedLines
           });
 
           messages.push({
@@ -604,19 +703,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         continue;
       } else {
         this._view?.webview.postMessage({ type: 'streamEnd' });
-        return;
+        break;
       }
     }
+    if (iteration >= MAX_TOOL_ITERATIONS) {
+      this._view?.webview.postMessage({
+        type: 'toolCallResult',
+        toolName: 'system',
+        callId: 'max-iterations',
+        success: false,
+        output: `Reached maximum tool call limit (${MAX_TOOL_ITERATIONS} iterations). Stopping.`,
+        denied: false
+      });
+      this._view?.webview.postMessage({ type: 'streamEnd' });
+    }
 
-    this._view?.webview.postMessage({
-      type: 'toolCallResult',
-      toolName: 'system',
-      callId: 'max-iterations',
-      success: false,
-      output: `Reached maximum tool call limit (${MAX_TOOL_ITERATIONS} iterations). Stopping.`,
-      denied: false
-    });
-    this._view?.webview.postMessage({ type: 'streamEnd' });
+    // Agentic loop finished, emit turn edits complete if there are any
+    if (this.turnFileBackups.size > 0) {
+      const editsList = Array.from(this.turnFileBackups.entries()).map(([fsPath, backup]) => {
+        const path = require('path');
+        return {
+          fileName: path.basename(fsPath),
+          filePath: fsPath,
+          addedLines: backup.addedLines,
+          removedLines: backup.removedLines
+        };
+      });
+
+      this._view?.webview.postMessage({
+        type: 'turnEditsComplete',
+        edits: editsList
+      });
+    }
   }
 
   /**
@@ -663,6 +781,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       let buffer = '';
       let contentAccumulator = '';
       let toolCallsAccumulator: Record<number, { id: string; function: { name: string; arguments: string } }> = {};
+      let isThinking = false;
 
       this.activeRequest = http.request(options, (res) => {
         if (res.statusCode !== 200) {
@@ -704,8 +823,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 const delta = parsed.choices?.[0]?.delta;
 
                 if (delta?.content) {
+                  if (isThinking) {
+                    contentAccumulator += '\n</think>\n';
+                    this._view?.webview.postMessage({ type: 'streamChunk', text: '\n</think>\n' });
+                    isThinking = false;
+                  }
                   contentAccumulator += delta.content;
                   this._view?.webview.postMessage({ type: 'streamChunk', text: delta.content });
+                }
+
+                if (delta?.reasoning_content) {
+                  if (!isThinking && !contentAccumulator.includes('<think>')) {
+                    isThinking = true;
+                    contentAccumulator += '<think>\n';
+                    this._view?.webview.postMessage({ type: 'streamChunk', text: '<think>\n' });
+                  }
+                  contentAccumulator += delta.reasoning_content;
+                  this._view?.webview.postMessage({ type: 'streamChunk', text: delta.reasoning_content });
                 }
 
                 if (delta?.tool_calls) {
@@ -746,6 +880,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
 
         res.on('end', () => {
+          if (isThinking) {
+            contentAccumulator += '\n</think>\n';
+            this._view?.webview.postMessage({ type: 'streamChunk', text: '\n</think>\n' });
+            isThinking = false;
+          }
+
           const toolCalls = Object.values(toolCallsAccumulator);
           this.activeRequest = undefined;
 
@@ -774,8 +914,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _getHtmlForWebview(webview: vscode.Webview) {
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'style.css'));
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
+    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._context.extensionUri, 'media', 'style.css'));
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._context.extensionUri, 'media', 'main.js'));
     const nonce = getNonce();
 
     return `<!DOCTYPE html>
@@ -894,15 +1034,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             </div>
           </div>
 
-          <!-- ═══ CHAT VIEW ═══ -->
-          <div class="chat-view" id="chat-view">
-            <div class="messages" id="messages-container">
-              <div class="welcome-message">
-                <h3>Local LLM Sidebar Chat</h3>
-                <p>Choose a model from the dropdown above. The extension will automatically spawn the llama-server command in your VS Code terminal and connect to it.</p>
-                <p style="font-size: 11px; margin-top: 10px; color: var(--accent-color);">💡 Tip: Highlight any code in your editor to automatically attach it to your prompts!</p>
+          <!-- ═══ MAIN CHAT CONTAINER ═══ -->
+          <div class="main-chat-container" id="chat-view">
+            <!-- Scrollable View Area -->
+            <div class="view-area">
+              
+              <!-- Sessions View -->
+              <div class="sessions-view hidden" id="sessions-view">
+                <div class="sessions-header">
+                  <div class="sessions-title">SESSIONS</div>
+                  <div class="sessions-actions">
+                    <button class="sessions-action-btn" id="sessions-refresh-btn" title="Refresh">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    </button>
+                    <button class="sessions-action-btn" id="sessions-search-btn" title="Search">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    </button>
+                    <button class="sessions-action-btn" id="sessions-filter-btn" title="Filter">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="sessions-list" id="sessions-list">
+                  <!-- Session items dynamically injected -->
+                </div>
               </div>
-            </div>
+
+              <!-- Chat Messages View -->
+              <div class="chat-messages-view" id="chat-messages-view">
+                <div class="chat-header hidden" id="chat-header">
+                  <button class="back-to-sessions-btn" id="back-to-sessions-btn" title="Back to Sessions">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                  </button>
+                  <span class="chat-header-title" id="chat-header-title">New Chat</span>
+                </div>
+                <div class="messages" id="messages-container">
+                  <div class="welcome-message">
+                    <h3>Local LLM Sidebar Chat</h3>
+                    <p>Choose a model from the dropdown above. The extension will automatically spawn the llama-server command in your VS Code terminal and connect to it.</p>
+                    <p style="font-size: 11px; margin-top: 10px; color: var(--accent-color);">💡 Tip: Highlight any code in your editor to automatically attach it to your prompts!</p>
+                  </div>
+                </div>
+              </div>
+            </div> <!-- closes view-area -->
 
             <div class="input-area">
               <div class="context-toggles">
@@ -928,6 +1102,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </button>
               </div>
 
+              <!-- Dedicated container for the worktree review block -->
+              <div id="worktree-container"></div>
+
               <div class="tokenizer-row">
                 <textarea id="chat-input" placeholder="Type a message..." rows="1" disabled></textarea>
               </div>
@@ -947,7 +1124,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </div>
               </div>
             </div> <!-- closes input-area -->
-          </div> <!-- closes chat-view -->
+          </div> <!-- closes main-chat-container -->
 
           <!-- Compact Footer -->
           <div class="chat-footer">
@@ -958,6 +1135,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               </select>
               <button class="stop-btn" id="stop-btn" title="Stop Server" style="display: none;">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+              </button>
+              <button class="stop-btn" id="start-btn" title="Start Server" style="display: none;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               </button>
             </div>
             <div class="footer-right">
@@ -970,6 +1150,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               </button>
               <button class="footer-btn config-toggle-btn" id="config-toggle-btn" title="Model Setup">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              </button>
+              <button class="footer-btn sessions-toggle-btn" id="sessions-toggle-btn" title="View Sessions">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+              </button>
+              <button class="footer-btn" id="new-session-btn" title="New Session">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               </button>
             </div>
           </div>

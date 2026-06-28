@@ -4,7 +4,7 @@ import { ChatViewProvider } from './chatViewProvider';
 
 export function activate(context: vscode.ExtensionContext) {
   const controller = new ServerController();
-  const provider = new ChatViewProvider(context.extensionUri, controller);
+  const provider = new ChatViewProvider(context, controller);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider),

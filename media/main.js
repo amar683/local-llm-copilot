@@ -1,4 +1,8 @@
 const vscode = acquireVsCodeApi();
+window.vscode = vscode;
+window.sendToolAction = function(callId, action, filePath) {
+  vscode.postMessage({ type: 'toolAction', callId, action, filePath });
+};
 
 // ─── Element References ─────────────────────────────────────────────────────
 
@@ -35,6 +39,18 @@ const systemPromptInput = document.getElementById('settings-system-prompt');
 const openWebUIBtn = document.getElementById('open-webui-btn');
 const tokenCountBtn = document.getElementById('token-count-btn');
 const tokenCountLabel = document.getElementById('token-count-label');
+const startBtn = document.getElementById('start-btn');
+
+// Sessions view elements
+const sessionsToggleBtn = document.getElementById('sessions-toggle-btn');
+const newSessionBtn = document.getElementById('new-session-btn');
+const sessionsView = document.getElementById('sessions-view');
+const chatMessagesView = document.getElementById('chat-messages-view');
+const chatHeader = document.getElementById('chat-header');
+const chatHeaderTitle = document.getElementById('chat-header-title');
+const backToSessionsBtn = document.getElementById('back-to-sessions-btn');
+const sessionsCloseBtn = document.getElementById('sessions-close-btn');
+const sessionsListContainer = document.getElementById('sessions-list');
 
 // Config view elements
 const configToggleBtn = document.getElementById('config-toggle-btn');
@@ -64,6 +80,9 @@ let toolsEnabled = false;
 let isConfigView = false;
 let pendingToolCalls = [];
 let editingModelId = null; // null = adding new, string = editing existing
+
+let sessionsList = [];
+let currentSessionId = '';
 
 // ─── Event Listeners ────────────────────────────────────────────────────────
 
@@ -222,6 +241,187 @@ configSaveModelBtn.addEventListener('click', () => {
   }
 });
 
+// ─── Sessions View Listeners ────────────────────────────────────────────────
+
+function showSessionsView() {
+  sessionsView.classList.remove('hidden');
+  chatMessagesView.classList.add('hidden');
+  if (configView) configView.style.display = 'none';
+  if (chatView) chatView.style.display = 'flex';
+}
+
+function showChatView(title) {
+  sessionsView.classList.add('hidden');
+  chatMessagesView.classList.remove('hidden');
+  if (title) {
+    chatHeader.classList.remove('hidden');
+    chatHeaderTitle.textContent = title;
+  } else {
+    chatHeader.classList.add('hidden');
+  }
+}
+
+if (sessionsToggleBtn) {
+  sessionsToggleBtn.addEventListener('click', () => {
+    if (sessionsView.classList.contains('hidden')) {
+      showSessionsView();
+    } else {
+      showChatView(chatHistory.length > 0 ? (sessionsList.find(s => s.id === currentSessionId)?.title || 'Chat') : null);
+    }
+  });
+}
+
+if (backToSessionsBtn) {
+  backToSessionsBtn.addEventListener('click', () => {
+    showSessionsView();
+  });
+}
+
+if (sessionsCloseBtn) {
+  sessionsCloseBtn.addEventListener('click', () => {
+    showChatView(chatHistory.length > 0 ? (sessionsList.find(s => s.id === currentSessionId)?.title || 'Chat') : null);
+  });
+}
+
+if (newSessionBtn) {
+  newSessionBtn.addEventListener('click', () => {
+    startNewSession();
+  });
+}
+
+function startNewSession() {
+  currentSessionId = Date.now().toString();
+  chatHistory = [];
+  messagesContainer.innerHTML = `
+    <div class="welcome-message">
+      <h3>Local LLM Sidebar Chat</h3>
+      <p>Choose a model from the dropdown above. The extension will automatically spawn the llama-server command in your VS Code terminal and connect to it.</p>
+      <p style="font-size: 11px; margin-top: 10px; color: var(--accent-color);">💡 Tip: Highlight any code in your editor to automatically attach it to your prompts!</p>
+    </div>
+  `;
+  showChatView();
+  renderSessions();
+}
+
+function renderSessions() {
+  if (!sessionsListContainer) return;
+  sessionsListContainer.innerHTML = '';
+
+  sessionsList.forEach(session => {
+    const item = document.createElement('div');
+    item.className = 'session-item';
+    if (session.id === currentSessionId) {
+      item.classList.add('active');
+    }
+
+    const dot = document.createElement('div');
+    dot.className = 'session-dot';
+    
+    const content = document.createElement('div');
+    content.className = 'session-content';
+
+    const title = document.createElement('div');
+    title.className = 'session-title';
+    title.textContent = session.title || 'New Chat';
+
+    const time = document.createElement('div');
+    time.className = 'session-time';
+    // Format timestamp nicely, or just 'now' if recent
+    const diff = Date.now() - session.timestamp;
+    if (diff < 60000) {
+      time.textContent = 'now';
+    } else if (diff < 3600000) {
+      time.textContent = Math.floor(diff / 60000) + 'm ago';
+    } else if (diff < 86400000) {
+      time.textContent = Math.floor(diff / 3600000) + 'h ago';
+    } else {
+      time.textContent = new Date(session.timestamp).toLocaleDateString();
+    }
+
+    content.appendChild(title);
+    content.appendChild(time);
+    item.appendChild(dot);
+    item.appendChild(content);
+
+    item.addEventListener('click', () => {
+      loadSession(session);
+    });
+
+    sessionsListContainer.appendChild(item);
+  });
+}
+
+function loadSession(session) {
+  currentSessionId = session.id;
+  chatHistory = session.messages || [];
+  
+  // Clear messages container
+  messagesContainer.innerHTML = '';
+  
+  if (chatHistory.length === 0) {
+    startNewSession();
+    return;
+  }
+  
+  // Render chat history
+  chatHistory.forEach(msg => {
+    if (msg.role === 'user') {
+      appendBubble('user', msg.content);
+    } else if (msg.role === 'assistant') {
+      // Create a bubble and append content
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message-wrapper assistant';
+      
+      const label = document.createElement('div');
+      label.className = 'sender-label';
+      label.textContent = msg.tool_calls ? 'Agent' : 'Local Assistant';
+      wrapper.appendChild(label);
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = parseMarkdown(msg.content || '');
+      wrapper.appendChild(bubble);
+      
+      messagesContainer.appendChild(wrapper);
+    }
+  });
+  
+  showChatView(session.title);
+  renderSessions();
+  scrollToBottom();
+}
+
+function saveCurrentSession() {
+  if (!currentSessionId) {
+    currentSessionId = Date.now().toString();
+  }
+  
+  // Generate title from first user message
+  let title = 'New Chat';
+  const firstUserMsg = chatHistory.find(m => m.role === 'user');
+  if (firstUserMsg && firstUserMsg.content) {
+    // extract clean text without markdown links/images if possible
+    let cleanText = firstUserMsg.content.split('\\n')[0];
+    if (cleanText.length > 25) {
+      cleanText = cleanText.substring(0, 25) + '...';
+    }
+    title = cleanText;
+  }
+
+  const sessionData = {
+    id: currentSessionId,
+    title,
+    timestamp: Date.now(),
+    messages: chatHistory
+  };
+
+  if (!chatHeader.classList.contains('hidden') && chatHeaderTitle) {
+    chatHeaderTitle.textContent = title;
+  }
+
+  vscode.postMessage({ type: 'saveSession', session: sessionData });
+}
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 vscode.postMessage({ type: 'getModels' });
@@ -231,6 +431,14 @@ vscode.postMessage({ type: 'getModels' });
 window.addEventListener('message', e => {
   const msg = e.data;
   switch (msg.type) {
+    case 'sessionsList':
+      sessionsList = msg.sessions;
+      if (!currentSessionId && sessionsList.length > 0) {
+        // Optional: auto-load most recent session if none active
+        // But for now, we just start a new session if empty
+      }
+      renderSessions();
+      break;
     case 'modelsList':
       modelsList = msg.models;
       updateDropdown(msg.selectedId);
@@ -242,6 +450,9 @@ window.addEventListener('message', e => {
       break;
     case 'statusUpdate':
       updateStatus(msg.status, msg.message);
+      break;
+    case 'streamStart':
+      handleStreamStart();
       break;
     case 'streamChunk':
       appendChunk(msg.text);
@@ -270,6 +481,22 @@ window.addEventListener('message', e => {
       break;
     case 'toolCallResult':
       handleToolCallResult(msg);
+      break;
+    case 'turnEditsComplete':
+      handleTurnEditsComplete(msg);
+      break;
+    case 'toolActionComplete':
+      const confirmBlockId = document.getElementById(`tool-${msg.callId}`);
+      if (confirmBlockId) {
+        const cBlock = confirmBlockId.querySelector('.tool-call-confirmation');
+        if (cBlock) cBlock.classList.add('hidden');
+      }
+      break;
+    case 'turnActionComplete':
+      const worktreeContainer = document.getElementById('worktree-container');
+      if (worktreeContainer) {
+        worktreeContainer.innerHTML = '';
+      }
       break;
     case 'tokenUsage':
       handleTokenUsage(msg);
@@ -343,26 +570,15 @@ function renderConfigModelCards() {
           <div class="config-card-chips">${chips.map(c => `<span class="config-chip">${c}</span>`).join('')}</div>
         </div>
         <div class="config-card-actions">
-          <button class="config-edit-btn" data-model-id="${model.id}" title="Edit Model">
+          <button class="config-edit-btn" data-action="editModel" data-model-id="${model.id}" title="Edit Model">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="config-delete-btn" data-model-id="${model.id}" title="Delete Model">
+          <button class="config-delete-btn" data-action="deleteModel" data-model-id="${model.id}" title="Delete Model">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
       </div>
     `;
-
-    // Edit handler
-    card.querySelector('.config-edit-btn').addEventListener('click', () => {
-      openModelForm(model);
-    });
-
-    // Delete handler
-    card.querySelector('.config-delete-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      vscode.postMessage({ type: 'deleteModel', modelId: model.id });
-    });
 
     configModelsList.appendChild(card);
   });
@@ -379,6 +595,14 @@ modelSelect.addEventListener('change', (e) => {
 stopBtn.addEventListener('click', () => {
   vscode.postMessage({ type: 'stopServer' });
 });
+
+if (startBtn) {
+  startBtn.addEventListener('click', () => {
+    if (selectedModelId) {
+      vscode.postMessage({ type: 'selectModel', modelId: selectedModelId });
+    }
+  });
+}
 
 sendBtn.addEventListener('click', () => {
   if (isGenerating) {
@@ -513,14 +737,29 @@ function updateStatus(status, text) {
   chatInput.disabled = isDisabled;
   sendBtn.disabled = isDisabled;
   tokenCountBtn.disabled = isDisabled;
-  stopBtn.style.display = isDisabled ? 'none' : 'flex';
+  
+  if (status === 'starting' || status === 'generating') {
+    if (stopBtn) stopBtn.style.display = 'flex';
+    if (startBtn) startBtn.style.display = 'none';
+  } else if (status === 'idle') {
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (startBtn) startBtn.style.display = 'flex';
+  } else {
+    if (stopBtn) stopBtn.style.display = 'flex'; // 'ready'
+    if (startBtn) startBtn.style.display = 'none';
+  }
+  
   openWebUIBtn.style.display = isDisabled ? 'none' : 'flex';
-
 }
 
 function sendMessage() {
   const text = chatInput.value.trim();
   if (!text) return;
+
+  // If typing from the Sessions View, start a new chat automatically
+  if (!sessionsView.classList.contains('hidden')) {
+    startNewSession();
+  }
 
   chatInput.value = '';
   chatInput.style.height = 'auto';
@@ -534,6 +773,7 @@ function sendMessage() {
   appendBubble('user', text);
 
   chatHistory.push({ role: 'user', content: text });
+  saveCurrentSession();
 
   currentAssistantBubble = appendBubble('assistant', '...');
   currentResponseText = '';
@@ -564,34 +804,35 @@ function sendMessage() {
   });
 }
 
+function handleStreamStart() {
+  if (!currentAssistantBubble) return;
+  currentResponseText = '';
+  
+  // Remove the '...' if it's the only thing there
+  if (currentAssistantBubble.textContent === '...') {
+    currentAssistantBubble.innerHTML = '';
+  }
+  
+  // Create a new response container for this chunk of text
+  const responseContainer = document.createElement('div');
+  responseContainer.className = 'response-text';
+  currentAssistantBubble.appendChild(responseContainer);
+}
+
 function appendChunk(text) {
   if (!currentAssistantBubble) return;
 
-  if (currentResponseText === '') {
-    const toolBlocks = currentAssistantBubble.querySelectorAll('.tool-call-block');
-    if (toolBlocks.length === 0) {
-      currentAssistantBubble.innerHTML = '';
-    } else {
-      const nodes = currentAssistantBubble.childNodes;
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        if (nodes[i].nodeType === Node.TEXT_NODE || 
-            (nodes[i].nodeType === Node.ELEMENT_NODE && !nodes[i].classList?.contains('tool-call-block'))) {
-          if (nodes[i].textContent === '...' || nodes[i].classList?.contains('response-text')) {
-            nodes[i].remove();
-          }
-        }
-      }
-    }
-  }
-
   currentResponseText += text;
   
-  let responseContainer = currentAssistantBubble.querySelector('.response-text');
+  const containers = currentAssistantBubble.querySelectorAll('.response-text');
+  let responseContainer = containers.length > 0 ? containers[containers.length - 1] : null;
+  
   if (!responseContainer) {
     responseContainer = document.createElement('div');
     responseContainer.className = 'response-text';
     currentAssistantBubble.appendChild(responseContainer);
   }
+  
   responseContainer.innerHTML = parseMarkdown(currentResponseText);
   scrollToBottom();
 }
@@ -599,6 +840,19 @@ function appendChunk(text) {
 // ─── Tool Call UI ───────────────────────────────────────────────────────────
 
 function handleToolCallStart(msg) {
+  chatHistory.push({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{
+      id: msg.callId,
+      type: 'function',
+      function: {
+        name: msg.toolName,
+        arguments: JSON.stringify(msg.toolArgs)
+      }
+    }]
+  });
+
   if (!currentAssistantBubble) return;
 
   if (currentAssistantBubble.textContent === '...') {
@@ -612,18 +866,43 @@ function handleToolCallStart(msg) {
   const toolIcon = getToolIcon(msg.toolName);
   const argsPreview = formatToolArgs(msg.toolName, msg.toolArgs);
 
+  let badgeText = msg.toolName;
+  if (msg.toolName === 'edit_file' || msg.toolName === 'multi_replace_file_content' || msg.toolName === 'replace_file_content') {
+    badgeText = 'Edited';
+  } else if (msg.toolName === 'read_file' || msg.toolName === 'view_file') {
+    badgeText = 'Read';
+  }
+
+  // Try to find filename from args
+  let fileName = '';
+  if (msg.toolArgs && (msg.toolArgs.TargetFile || msg.toolArgs.AbsolutePath || msg.toolArgs.SearchPath)) {
+    const fullPath = msg.toolArgs.TargetFile || msg.toolArgs.AbsolutePath || msg.toolArgs.SearchPath;
+    fileName = fullPath.split('/').pop().split('\\').pop();
+  }
+
+  const badgeHtml = fileName ? `
+    <span class="tool-timeline-action">${badgeText}</span>
+    <span class="tool-timeline-badge">
+      <span class="tool-timeline-file-icon">📝</span>
+      <span class="tool-timeline-filename">${fileName}</span>
+      <span class="tool-timeline-stats hidden" id="stats-${msg.callId}"></span>
+    </span>
+  ` : `
+    <span class="tool-timeline-action">${badgeText}</span>
+  `;
+
   block.innerHTML = `
-    <div class="tool-call-header executing" onclick="toggleToolDetails(this)">
-      <div class="tool-call-status-icon"><span class="tool-call-spinner"></span></div>
-      <div class="tool-call-title">
-        <span class="tool-call-name">${msg.toolName}</span>
-        <span class="tool-call-args-inline">${escapeHtml(truncateOutput(argsPreview))}</span>
+    <div class="tool-timeline-row executing" data-action="toggleToolDetails">
+      <div class="tool-timeline-icon">
+        <span class="tool-call-spinner"></span>
+      </div>
+      <div class="tool-timeline-content">
+        ${badgeHtml}
       </div>
       <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
     </div>
     <div class="tool-call-details hidden">
       <div class="tool-detail-section">
-        <div class="tool-detail-label">Arguments</div>
         <pre class="tool-call-args-content"><code>${escapeHtml(argsPreview)}</code></pre>
       </div>
       <div class="tool-detail-section tool-result-container hidden">
@@ -638,6 +917,12 @@ function handleToolCallStart(msg) {
 }
 
 function handleToolCallResult(msg) {
+  chatHistory.push({
+    role: 'tool',
+    tool_call_id: msg.callId,
+    content: String(msg.output)
+  });
+
   const block = document.getElementById(`tool-${msg.callId}`);
   if (!block) {
     if (currentAssistantBubble) {
@@ -645,16 +930,13 @@ function handleToolCallResult(msg) {
       fallbackBlock.className = 'tool-call-block';
       fallbackBlock.innerHTML = `
         <div class="tool-call-header ${msg.success ? 'success' : 'error'}">
-          <span class="tool-call-icon">${getToolIcon(msg.toolName)}</span>
-          <span class="tool-call-name">${msg.toolName}</span>
-          <span class="tool-call-status">${msg.denied ? 'denied' : msg.success ? 'done' : 'failed'}</span>
-        </div>
-        <div class="tool-call-result">
-          <div class="tool-call-result-toggle" onclick="toggleToolDetails(this)">
-            <svg class="tool-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-            <span>Result</span>
+          <div class="tool-call-status-icon">
+            ${msg.success ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'}
           </div>
-          <pre class="tool-call-result-content hidden"><code>${escapeHtml(truncateOutput(msg.output))}</code></pre>
+          <div class="tool-call-title">
+            <span class="tool-call-name">${msg.toolName}</span>
+          </div>
+          <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
       `;
       currentAssistantBubble.appendChild(fallbackBlock);
@@ -662,20 +944,26 @@ function handleToolCallResult(msg) {
     return;
   }
 
-  const header = block.querySelector('.tool-call-header');
+  const header = block.querySelector('.tool-timeline-row');
   if (header) {
     header.classList.remove('executing');
     header.classList.add(msg.denied ? 'denied' : msg.success ? 'success' : 'error');
     
-    const iconContainer = header.querySelector('.tool-call-status-icon');
+    const iconContainer = header.querySelector('.tool-timeline-icon');
     if (iconContainer) {
       const statusIcon = msg.denied ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>' : 
                          msg.success ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : 
                          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
       iconContainer.innerHTML = statusIcon;
     }
-  }
 
+    const statsContainer = block.querySelector('.tool-timeline-stats');
+    if (statsContainer && (msg.addedLines || msg.removedLines)) {
+      statsContainer.classList.remove('hidden');
+      statsContainer.innerHTML = `<span class="added">+${msg.addedLines || 0}</span> <span class="removed">-${msg.removedLines || 0}</span>`;
+    }
+  }
+  
   const resultContainer = block.querySelector('.tool-result-container');
   const resultContent = block.querySelector('.tool-call-result-content code');
   
@@ -685,6 +973,114 @@ function handleToolCallResult(msg) {
   }
   scrollToBottom();
 }
+function handleTurnEditsComplete(msg) {
+  if (!msg.edits || msg.edits.length === 0) return;
+
+  const worktreeContainer = document.getElementById('worktree-container');
+  if (!worktreeContainer) return;
+
+  const worktreeBlock = document.createElement('div');
+  worktreeBlock.className = 'worktree-block';
+  
+  let totalAdded = 0;
+  let totalRemoved = 0;
+  
+  let filesHtml = msg.edits.map(edit => {
+    totalAdded += edit.addedLines || 0;
+    totalRemoved += edit.removedLines || 0;
+    
+    // Safely encode file path for data attribute
+    const safePath = escapeHtml(edit.filePath);
+    return `
+      <div class="worktree-file-row" data-action="reviewFile" data-path="${safePath}">
+        <div class="worktree-file-info">
+          <span class="worktree-file-icon">📝</span>
+          <span class="worktree-file-name">${escapeHtml(edit.fileName)}</span>
+        </div>
+        <div class="worktree-diff-stats">
+          <span class="added">+${edit.addedLines || 0}</span>
+          <span class="removed">-${edit.removedLines || 0}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const firstPath = msg.edits.length > 0 ? escapeHtml(msg.edits[0].filePath) : '';
+
+  worktreeBlock.innerHTML = `
+    <div class="worktree-header" data-action="toggleWorktree">
+      <div class="worktree-header-left">
+        <svg class="worktree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="worktree-title">${msg.edits.length} file${msg.edits.length > 1 ? 's' : ''} changed</span>
+        <span class="worktree-diff-stats">
+          <span class="added">+${totalAdded}</span>
+          <span class="removed">-${totalRemoved}</span>
+        </span>
+      </div>
+      <div class="worktree-actions">
+        <button class="worktree-btn primary" data-action="acceptAll">Keep</button>
+        <button class="worktree-btn secondary" data-action="rejectAll">Undo</button>
+        <button class="worktree-btn icon" title="View Diffs" data-action="reviewFile" data-path="${firstPath}">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 2h12v12H2V2zm1.5 1.5v9h9v-9h-9zM8 4h1v3.5H12v1H9V12H8V8.5H4.5v-1H8V4z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="worktree-files-list hidden">
+      ${filesHtml}
+    </div>
+  `;
+
+  worktreeContainer.innerHTML = '';
+  worktreeContainer.appendChild(worktreeBlock);
+}
+
+// Event Delegation for dynamically generated elements (CSP prevents inline onclick)
+document.addEventListener('click', (e) => {
+  // Find closest element with data-action attribute
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  
+  const action = target.getAttribute('data-action');
+  
+  if (action === 'approve' || action === 'reject') {
+    e.stopPropagation();
+    sendToolAction(target.getAttribute('data-callid'), action);
+  } else if (action === 'acceptAll' || action === 'rejectAll') {
+    e.stopPropagation();
+    sendToolAction('', action);
+  } else if (action === 'reviewFile') {
+    e.stopPropagation();
+    const filePath = target.getAttribute('data-path');
+    if (filePath) {
+      sendToolAction('', 'reviewFile', filePath);
+    }
+  } else if (action === 'toggleWorktree') {
+    e.stopPropagation();
+    toggleWorktree(target);
+  } else if (action === 'toggleToolDetails') {
+    e.stopPropagation();
+    toggleToolDetails(target);
+  } else if (action === 'editModel') {
+    e.stopPropagation();
+    const modelId = target.getAttribute('data-model-id');
+    const model = modelsList.find(m => m.id === modelId);
+    if (model) openModelForm(model);
+  } else if (action === 'deleteModel') {
+    e.stopPropagation();
+    vscode.postMessage({ type: 'deleteModel', modelId: target.getAttribute('data-model-id') });
+  }
+});
+
+window.toggleWorktree = function(el) {
+  const content = el.nextElementSibling;
+  const chevron = el.querySelector('.worktree-chevron');
+  if (content) {
+    content.classList.toggle('hidden');
+    if (chevron) {
+      chevron.style.transform = content.classList.contains('hidden') ? '' : 'rotate(90deg)';
+    }
+  }
+};
 
 window.toggleToolDetails = function(el) {
   const content = el.nextElementSibling;
@@ -732,6 +1128,7 @@ function stopStreaming() {
   isGenerating = false;
   if (currentAssistantBubble && currentResponseText) {
     chatHistory.push({ role: 'assistant', content: currentResponseText });
+    saveCurrentSession();
   }
   sendIcon.classList.remove('hidden');
   stopGenIcon.classList.add('hidden');
@@ -831,6 +1228,11 @@ function handleTokenizeResult(count) {
 function parseMarkdown(text) {
   if (!text) return '';
   let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  // Parse <think> tags (which are now &lt;think&gt;)
+  html = html.replace(/&lt;think&gt;/gi, '<details class="think-block" open><summary>Thinking...</summary><div class="think-content">')
+             .replace(/&lt;\/think&gt;/gi, '</div></details>');
+
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
     const language = lang || 'code';
     const nonce = Math.random().toString(36).substring(7);
