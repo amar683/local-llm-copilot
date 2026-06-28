@@ -113,4 +113,75 @@ export class ServerController {
   public getPort(): number {
     return this.currentPort;
   }
+
+  public getServerUrl(): string {
+    return `http://127.0.0.1:${this.currentPort}`;
+  }
+
+  // Fetch /props from running llama-server (model info, context size, etc.)
+  public fetchServerProps(port: number): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/props',
+        method: 'GET',
+        timeout: 3000
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            resolve({ raw: body });
+          }
+        });
+      });
+
+      req.on('error', (err) => reject(err));
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Timeout fetching /props'));
+      });
+      req.end();
+    });
+  }
+
+  // Tokenize text via the /tokenize endpoint — returns token array
+  public tokenizeText(port: number, text: string): Promise<{ tokens: number[] }> {
+    return new Promise((resolve, reject) => {
+      const postData = JSON.stringify({ content: text });
+
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/tokenize',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 3000
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            resolve({ tokens: [] });
+          }
+        });
+      });
+
+      req.on('error', (err) => reject(err));
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Timeout calling /tokenize'));
+      });
+      req.write(postData);
+      req.end();
+    });
+  }
 }

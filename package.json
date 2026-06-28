@@ -54,64 +54,57 @@
     "configuration": {
       "title": "Local LLM Sidebar Chat",
       "properties": {
+        "localLlm.llamaCppPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to your llama.cpp build directory (the folder containing `build-release/bin/llama-server`). Example: `/Users/you/llama.cpp`"
+        },
         "localLlm.models": {
           "type": "array",
-          "markdownDescription": "Configure the local models and the shell commands used to start their llama-server processes.",
+          "markdownDescription": "Configure the local models. Use the setup panel in the sidebar to add models visually, or edit this JSON directly.",
           "items": {
             "type": "object",
             "properties": {
               "id": {
                 "type": "string",
-                "description": "Unique ID for the model (e.g. ai3b, ai8b)"
+                "description": "Unique ID for the model (auto-generated if using the UI)"
               },
               "name": {
                 "type": "string",
                 "description": "Display name of the model in the chat panel UI"
               },
-              "command": {
+              "modelPath": {
                 "type": "string",
-                "description": "Shell command to run in the terminal to start the server (e.g. cd '/path/to/llama.cpp' && ./build-release/bin/llama-server -m ~/models/...gguf -ngl 99 --port 8080)"
+                "description": "Absolute path to the .gguf model file (e.g. /Users/you/models/model.gguf)"
+              },
+              "contextSize": {
+                "type": "number",
+                "default": 4096,
+                "description": "Context window size in tokens"
+              },
+              "gpuLayers": {
+                "type": "number",
+                "default": 99,
+                "description": "Number of layers to offload to GPU (-ngl). Use 99 for full GPU offload."
               },
               "port": {
                 "type": "number",
                 "default": 8080,
                 "description": "The port number on which llama-server listens"
+              },
+              "enableTools": {
+                "type": "boolean",
+                "default": false,
+                "description": "Enable agentic tool calling for this model (requires a model that supports function calling)"
+              },
+              "command": {
+                "type": "string",
+                "description": "Advanced: Custom shell command override. If set, this is used instead of auto-generating from llamaCppPath + modelPath."
               }
             },
-            "required": ["id", "name", "command", "port"]
+            "required": ["id", "name"]
           },
-          "default": [
-            {
-              "id": "aicoder",
-              "name": "Qwen 2.5 Coder 7B (Release)",
-              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080 -c 8192",
-              "port": 8080
-            },
-            {
-              "id": "ai3b",
-              "name": "Llama 3.2 3B (Release)",
-              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
-              "port": 8080
-            },
-            {
-              "id": "ai8b",
-              "name": "Llama 3.1 8B (Release)",
-              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
-              "port": 8080
-            },
-            {
-              "id": "ai3b-dev",
-              "name": "Llama 3.2 3B (Dev)",
-              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build/bin/llama-server -m ~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
-              "port": 8080
-            },
-            {
-              "id": "ai8b-dev",
-              "name": "Llama 3.1 8B (Dev)",
-              "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build/bin/llama-server -m ~/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
-              "port": 8080
-            }
-          ]
+          "default": []
         }
       }
     }

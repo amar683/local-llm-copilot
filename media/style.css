@@ -620,3 +620,727 @@ body {
   background: #a78bfa;
 }
 
+/* ======= Open Web UI Button ======= */
+.open-webui-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent-color);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.open-webui-btn:hover {
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #c084fc;
+  transform: scale(1.1);
+}
+
+/* ======= Server Info Panel ======= */
+.server-info-panel {
+  margin-top: 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  animation: slideIn 0.25s ease-out;
+}
+
+.server-info-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+  user-select: none;
+}
+
+.server-info-header:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+}
+
+.server-info-header span {
+  flex-grow: 1;
+}
+
+.server-info-chevron {
+  transition: transform 0.2s ease;
+}
+
+.server-info-header.expanded .server-info-chevron {
+  transform: rotate(180deg);
+}
+
+.server-info-body {
+  padding: 0 10px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: slideIn 0.2s ease-out;
+}
+
+.server-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.info-value {
+  font-size: 11px;
+  color: var(--text-main);
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 65%;
+  background: rgba(139, 92, 246, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(139, 92, 246, 0.12);
+}
+
+/* ======= Tokenizer Row & Button ======= */
+.tokenizer-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.tokenizer-row #chat-input {
+  flex-grow: 1;
+}
+
+.token-count-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+}
+
+.token-count-btn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: #c084fc;
+}
+
+.token-count-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ======= Action Buttons Layout ======= */
+.action-buttons-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ======= Tools Toggle ======= */
+.tools-toggle-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.tools-toggle-btn.active {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #c084fc;
+}
+
+/* ======= Tool Call Blocks ======= */
+.tool-call-block {
+  margin: 8px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  background: rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  animation: slideIn 0.25s ease-out;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(139, 92, 246, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background-color 0.3s;
+}
+
+.tool-call-header.executing {
+  background: rgba(249, 226, 175, 0.08);
+  border-bottom-color: rgba(249, 226, 175, 0.15);
+}
+
+.tool-call-header.success {
+  background: rgba(166, 227, 161, 0.08);
+  border-bottom-color: rgba(166, 227, 161, 0.15);
+}
+
+.tool-call-header.error {
+  background: rgba(243, 139, 168, 0.08);
+  border-bottom-color: rgba(243, 139, 168, 0.15);
+}
+
+.tool-call-header.denied {
+  background: rgba(243, 139, 168, 0.06);
+  border-bottom-color: rgba(243, 139, 168, 0.1);
+}
+
+.tool-call-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.tool-call-name {
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+  color: #c084fc;
+  font-size: 11px;
+}
+
+.tool-call-status {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-call-header.executing .tool-call-status {
+  color: var(--status-starting);
+}
+
+.tool-call-header.success .tool-call-status {
+  color: var(--status-ready);
+}
+
+.tool-call-header.error .tool-call-status,
+.tool-call-header.denied .tool-call-status {
+  color: var(--status-error);
+}
+
+/* Spinner animation for executing state */
+.tool-call-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(249, 226, 175, 0.2);
+  border-top-color: var(--status-starting);
+  border-radius: 50%;
+  animation: toolSpin 0.8s linear infinite;
+}
+
+@keyframes toolSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Args and Result sections */
+.tool-call-args,
+.tool-call-result {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.tool-call-args-toggle,
+.tool-call-result-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s, color 0.2s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-call-args-toggle:hover,
+.tool-call-result-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+}
+
+.tool-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.tool-call-args-content,
+.tool-call-result-content {
+  margin: 0;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tool-call-args-content code,
+.tool-call-result-content code {
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+  font-size: 11px;
+  color: var(--text-main);
+  background: transparent;
+  padding: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Response text that comes after tool calls */
+.response-text {
+  margin-top: 8px;
+}
+
+.response-text p {
+  margin: 0 0 8px 0;
+}
+
+.response-text p:last-child {
+  margin-bottom: 0;
+}
+
+/* Status icon in tool call header */
+.status-icon {
+  font-size: 11px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* ═══ CONFIG / SETUP VIEW ═══                                              */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/* Header title row with config toggle */
+.header-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.config-toggle-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.config-toggle-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+
+.config-toggle-btn.active {
+  color: var(--accent-color);
+  background-color: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* Chat view wrapper */
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+/* Config view */
+.config-view {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scroll-behavior: smooth;
+}
+
+.config-view::-webkit-scrollbar {
+  width: 6px;
+}
+
+.config-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.config-view::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+/* Config sections */
+.config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+
+/* Config input fields */
+.config-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background-color: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.config-input:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+.config-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* Browse row */
+.config-browse-row {
+  display: flex;
+  gap: 6px;
+}
+
+.config-browse-row .config-input {
+  flex-grow: 1;
+}
+
+.config-browse-btn {
+  padding: 8px 12px;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 6px;
+  color: #c084fc;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.config-browse-btn:hover {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+/* Hint text */
+.config-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  line-height: 1.4;
+}
+
+/* Model cards list */
+.config-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-model-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  animation: slideIn 0.25s ease-out;
+}
+
+.config-model-card:hover {
+  border-color: rgba(139, 92, 246, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.config-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.config-card-info {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.config-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 3px;
+}
+
+.config-card-file {
+  font-size: 10px;
+  font-family: var(--vscode-editor-font-family, Consolas, Monaco, monospace);
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.config-chip {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  color: #c084fc;
+  white-space: nowrap;
+}
+
+.config-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0.5;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.config-delete-btn:hover {
+  opacity: 1;
+  color: var(--status-error);
+  background: rgba(243, 139, 168, 0.1);
+}
+
+/* Add model button */
+.config-add-model-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  background: var(--primary-gradient);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
+}
+
+.config-add-model-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.3);
+}
+
+/* Add model form */
+.config-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  animation: slideIn 0.25s ease-out;
+}
+
+.config-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-form-group label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.config-form-row {
+  display: flex;
+  gap: 10px;
+}
+
+.config-form-half {
+  flex: 1;
+}
+
+/* Toggle switch */
+.config-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-color);
+  transition: 0.3s;
+  border-radius: 20px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-muted);
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--primary-gradient);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(16px);
+  background-color: #ffffff;
+}
+
+/* Form buttons */
+.config-form-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.config-save-btn {
+  flex: 1;
+  padding: 8px 16px;
+  background: var(--primary-gradient);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.2);
+}
+
+.config-save-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
+}
+
+.config-cancel-btn {
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.config-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+/* Empty state */
+.config-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  text-align: center;
+}
+
