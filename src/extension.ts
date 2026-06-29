@@ -19,6 +19,10 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Stopping local LLM server...');
       await controller.stopServer();
     }),
+
+    vscode.commands.registerCommand('localLlm.indexCodebase', async () => {
+      await provider.indexCodebase();
+    }),
     
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('localLlm.models')) {

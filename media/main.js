@@ -111,6 +111,13 @@ let attachedImages = []; // array of base64 data URLs
 
 // ─── Event Listeners ────────────────────────────────────────────────────────
 
+const indexCodebaseBtn = document.getElementById('index-codebase-btn');
+if (indexCodebaseBtn) {
+  indexCodebaseBtn.addEventListener('click', () => {
+    vscode.postMessage({ type: 'indexCodebase' });
+  });
+}
+
 toggleActiveFileBtn.addEventListener('click', () => {
   toggleActiveFileBtn.classList.toggle('active');
 });
@@ -598,6 +605,20 @@ window.addEventListener('message', e => {
     case 'toolCallStart':
       handleToolCallStart(msg);
       break;
+    case 'toolCallEnd':
+      handleToolCallEnd(msg);
+      break;
+    case 'indexProgress':
+      // Update UI with indexing progress
+      const chatInput = document.getElementById('chat-input');
+      if (chatInput) {
+        if (msg.text.includes('complete')) {
+          chatInput.placeholder = "Type a message... (Type @ to attach files)";
+        } else {
+          chatInput.placeholder = msg.text;
+        }
+      }
+      break;
     case 'toolCallResult':
       handleToolCallResult(msg);
       break;
@@ -1047,6 +1068,9 @@ function updateStatus(status, text) {
   sendBtn.disabled = isDisabled;
   tokenCountBtn.disabled = isDisabled;
   if (attachImageBtn) attachImageBtn.disabled = isDisabled;
+  
+  const indexCodebaseBtn = document.getElementById('index-codebase-btn');
+  if (indexCodebaseBtn) indexCodebaseBtn.disabled = isDisabled;
   
   if (status === 'starting' || status === 'generating') {
     if (stopBtn) stopBtn.style.display = 'flex';

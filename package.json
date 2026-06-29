@@ -2,7 +2,7 @@
   "name": "local-llm-sidebar-chat",
   "displayName": "Local LLM Sidebar Chat",
   "description": "Start local llama.cpp servers directly from VS Code and chat with them in a premium sidebar interface.",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "publisher": "amardeeptomar",
   "engines": {
     "vscode": "^1.80.0"
@@ -46,6 +46,21 @@
         "category": "Local LLM"
       },
       {
+        "command": "localLlm.explainCode",
+        "title": "Local LLM: Explain this code",
+        "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.fixDiagnostic",
+        "title": "Local LLM: Fix this error",
+        "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.indexCodebase",
+        "title": "Local LLM: Index Codebase (Semantic Search)",
+        "category": "Local LLM"
+      },
+      {
         "command": "localLlm.clearChat",
         "title": "Local LLM: Clear Chat History",
         "category": "Local LLM"
@@ -59,6 +74,21 @@
     "configuration": {
       "title": "Local LLM Sidebar Chat",
       "properties": {
+        "localLlm.disabledTools": {
+          "type": "array",
+          "default": [],
+          "description": "List of disabled tool IDs"
+        },
+        "localLlm.semanticSearch.chunkSize": {
+          "type": "number",
+          "default": 1000,
+          "description": "The size (in characters) of each code chunk when indexing the codebase for semantic search."
+        },
+        "localLlm.semanticSearch.chunkOverlap": {
+          "type": "number",
+          "default": 200,
+          "description": "The overlap (in characters) between adjacent code chunks when indexing."
+        },
         "localLlm.llamaCppPath": {
           "type": "string",
           "default": "",

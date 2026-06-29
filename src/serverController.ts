@@ -194,4 +194,50 @@ export class ServerController {
       req.end();
     });
   }
+
+  // Get embeddings via the /v1/embeddings endpoint
+  public embedText(port: number, text: string | string[]): Promise<number[][]> {
+    return new Promise((resolve, reject) => {
+      const postData = JSON.stringify({
+        input: text,
+        model: 'local' // usually ignored by llama.cpp
+      });
+
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/v1/embeddings',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 30000 // embeddings can take a while for large texts
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.data && Array.isArray(data.data)) {
+              // Return array of embedding vectors
+              resolve(data.data.map((d: any) => d.embedding));
+            } else {
+              reject(new Error('Invalid embedding response format'));
+            }
+          } catch (e) {
+            reject(new Error(`Failed to parse embedding response: ${e}`));
+          }
+        });
+      });
+
+      req.on('error', (err) => reject(err));
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Timeout calling /v1/embeddings'));
+      });
+      req.write(postData);
+      req.end();
+    });
+  }
 }

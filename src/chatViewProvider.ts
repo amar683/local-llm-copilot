@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { ServerController } from './serverController';
 import { TOOL_DEFINITIONS, TOOL_CATEGORIES, AGENTIC_SYSTEM_PROMPT } from './toolDefinitions';
 import { executeToolCall, initTools } from './toolExecutor';
+import { SemanticSearch } from './semanticSearch';
 
 /** Maximum number of tool-call iterations per user turn */
 const MAX_TOOL_ITERATIONS = 10;
@@ -156,6 +157,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.activeRequest = undefined;
             this._view?.webview.postMessage({ type: 'streamEnd' });
           }
+          break;
+
+        case 'indexCodebase':
+          this.indexCodebase();
           break;
 
         case 'openWebUI':
@@ -486,6 +491,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       cmd += ` --mmproj '${model.mmprojPath.trim()}'`;
     }
     
+    // Always enable embeddings so we can use semantic search
+    cmd += ' --embedding';
+    
     if (enableTools) {
       cmd += ' --jinja';
     }
@@ -572,6 +580,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._view?.webview.postMessage({ type: 'serverProps', props });
     } catch {
       this._view?.webview.postMessage({ type: 'serverProps', props: null });
+    }
+  }
+
+  public async indexCodebase() {
+    if (this.currentServerStatus !== 'ready') {
+      vscode.window.showErrorMessage('Local LLM Server is not ready. Start a model with --embedding support first.');
+      return;
+    }
+
+    try {
+      const port = this.serverController.getPort();
+      await SemanticSearch.indexWorkspace(this.serverController, port, (msg) => {
+        // Send progress updates to the webview UI
+        this._view?.webview.postMessage({ type: 'indexProgress', text: msg });
+        vscode.window.setStatusBarMessage(`Semantic Search: ${msg}`, 3000);
+      });
+      vscode.window.showInformationMessage('Codebase successfully indexed for Semantic Search!');
+      this._view?.webview.postMessage({ type: 'indexProgress', text: 'Indexing complete!' });
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Failed to index codebase: ${e.message}`);
+      this._view?.webview.postMessage({ type: 'error', text: `Failed to index codebase: ${e.message}` });
     }
   }
 
@@ -685,7 +714,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // 4. Process user-attached files via @ mentions
+    // 4. Handle Semantic Search (@search tag)
+    const lastIdx = enrichedMessages.length - 1;
+    if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+      let originalContent = enrichedMessages[lastIdx].content;
+      if (typeof originalContent === 'string' && originalContent.includes('@search')) {
+        // Extract the query (everything after @search)
+        const match = originalContent.match(/@search\s+(.*)/i);
+        if (match && match[1]) {
+          const query = match[1].trim();
+          try {
+            this._view?.webview.postMessage({ type: 'statusUpdate', status: 'generating', message: 'Searching codebase...' });
+            const port = this.serverController.getPort();
+            const topChunks = await SemanticSearch.search(this.serverController, port, query, 5);
+            
+            if (topChunks.length > 0) {
+              let searchStr = `[Semantic Search Results for "${query}"]\n`;
+              for (const chunk of topChunks) {
+                searchStr += `\n---\nFile: ${chunk.file} (Lines ${chunk.startLine}-${chunk.endLine})\n\`\`\`\n${chunk.text}\n\`\`\`\n`;
+              }
+              // Remove the @search from the original content to not confuse the LLM
+              originalContent = originalContent.replace(/@search\s+.*$/im, '').trim();
+              enrichedMessages[lastIdx].content = `${searchStr}\nQuestion:\n${originalContent || query}`;
+            }
+          } catch (e: any) {
+            this._view?.webview.postMessage({ type: 'error', text: `Semantic search failed: ${e.message}` });
+          }
+        }
+      }
+    }
+
+    // 5. Process user-attached files via @ mentions
     if (attachedFiles && attachedFiles.length > 0) {
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (workspaceRoot) {
@@ -1302,6 +1361,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                   </button>
                   <input type="file" id="image-upload-input" accept="image/*" multiple style="display: none;">
+                  <button class="token-count-btn index-codebase-btn" id="index-codebase-btn" title="Index Codebase (Semantic Search)" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                  </button>
                   <button class="token-count-btn" id="token-count-btn" title="Count tokens in current input" disabled>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
                     <span id="token-count-label">Tokens</span>
