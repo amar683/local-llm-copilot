@@ -104,6 +104,11 @@ let mentionsState = {
   filteredFiles: []
 };
 
+// Vision state
+const attachImageBtn = document.getElementById('attach-image-btn');
+const imageUploadInput = document.getElementById('image-upload-input');
+let attachedImages = []; // array of base64 data URLs
+
 // ─── Event Listeners ────────────────────────────────────────────────────────
 
 toggleActiveFileBtn.addEventListener('click', () => {
@@ -168,6 +173,67 @@ tokenCountBtn.addEventListener('click', () => {
   vscode.postMessage({ type: 'tokenize', text });
 });
 
+// ─── Image Attachment Listeners ─────────────────────────────────────────────
+
+if (attachImageBtn) {
+  attachImageBtn.addEventListener('click', () => {
+    imageUploadInput.click();
+  });
+}
+
+if (imageUploadInput) {
+  imageUploadInput.addEventListener('change', async (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      for (const file of e.target.files) {
+        await processImageFile(file);
+      }
+      e.target.value = ''; // Reset input
+    }
+  });
+}
+
+chatInput.addEventListener('paste', async (e) => {
+  if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+    for (const file of e.clipboardData.files) {
+      if (file.type.startsWith('image/')) {
+        await processImageFile(file);
+      }
+    }
+  }
+});
+
+chatInput.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    for (const file of e.dataTransfer.files) {
+      if (file.type.startsWith('image/')) {
+        await processImageFile(file);
+      }
+    }
+  }
+});
+
+chatInput.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+
+function processImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      attachedImages.push({
+        name: file.name || 'Pasted Image',
+        dataUrl: dataUrl
+      });
+      renderAttachmentTags();
+      resolve();
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── Config View Listeners ──────────────────────────────────────────────────
 
 configToggleBtn.addEventListener('click', () => {
@@ -216,6 +282,7 @@ function openModelForm(model) {
   // Fill or reset form fields
   document.getElementById('form-model-name').value = model ? model.name : '';
   document.getElementById('form-model-path').value = model ? (model.modelPath || '') : '';
+  document.getElementById('form-mmproj-path').value = model ? (model.mmprojPath || '') : '';
   document.getElementById('form-context-size').value = model ? (model.contextSize || 4096) : '4096';
   document.getElementById('form-port').value = model ? (model.port || 8080) : '8080';
   document.getElementById('form-gpu-layers').value = model ? (model.gpuLayers ?? 99) : '99';
@@ -234,9 +301,17 @@ formBrowseModelBtn.addEventListener('click', () => {
   vscode.postMessage({ type: 'browseModelFile' });
 });
 
+const formBrowseMmprojBtn = document.getElementById('form-browse-mmproj-btn');
+if (formBrowseMmprojBtn) {
+  formBrowseMmprojBtn.addEventListener('click', () => {
+    vscode.postMessage({ type: 'browseMmprojFile' });
+  });
+}
+
 configSaveModelBtn.addEventListener('click', () => {
   const name = document.getElementById('form-model-name').value.trim();
   const modelPath = document.getElementById('form-model-path').value.trim();
+  const mmprojPath = document.getElementById('form-mmproj-path').value.trim();
   const contextSize = parseInt(document.getElementById('form-context-size').value, 10) || 4096;
   const port = parseInt(document.getElementById('form-port').value, 10) || 8080;
   const gpuLayers = parseInt(document.getElementById('form-gpu-layers').value, 10);
@@ -261,6 +336,7 @@ configSaveModelBtn.addEventListener('click', () => {
       model: {
         name,
         modelPath,
+        mmprojPath,
         contextSize,
         port,
         gpuLayers: isNaN(gpuLayers) ? 99 : gpuLayers,
@@ -274,6 +350,7 @@ configSaveModelBtn.addEventListener('click', () => {
       model: {
         name,
         modelPath,
+        mmprojPath,
         contextSize,
         port,
         gpuLayers: isNaN(gpuLayers) ? 99 : gpuLayers,
@@ -571,6 +648,12 @@ window.addEventListener('message', e => {
       break;
     case 'modelDeleted':
       break;
+    case 'browseModelResult':
+      document.getElementById('form-model-path').value = msg.path;
+      break;
+    case 'browseMmprojResult':
+      document.getElementById('form-mmproj-path').value = msg.path;
+      break;
     case 'toolConfig':
       renderToolConfigModal(msg.categories, msg.disabledTools);
       break;
@@ -607,6 +690,7 @@ function renderConfigModelCards() {
     const chips = [];
     if (model.contextSize) chips.push(`${(model.contextSize / 1024).toFixed(0)}K ctx`);
     if (model.enableTools) chips.push('🔧 Tools');
+    if (model.mmprojPath) chips.push('🖼️ Vision');
     if (model.hasCustomCommand) chips.push('⚡ Custom cmd');
     chips.push(`Port ${model.port || 8080}`);
 
@@ -818,7 +902,7 @@ function removeAttachedFile(path) {
 }
 
 function renderAttachmentTags() {
-  if (attachedFiles.length === 0) {
+  if (attachedFiles.length === 0 && attachedImages.length === 0) {
     attachmentTagsContainer.classList.add('hidden');
     attachmentTagsContainer.innerHTML = '';
     return;
@@ -832,16 +916,34 @@ function renderAttachmentTags() {
       <div class="attachment-tag">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
         ${file.basename}
-        <span class="attachment-tag-remove" data-path="${file.path}">&times;</span>
+        <span class="attachment-tag-remove file-remove" data-path="${file.path}">&times;</span>
+      </div>
+    `;
+  });
+
+  attachedImages.forEach((img, index) => {
+    html += `
+      <div class="attachment-tag image-tag">
+        <img src="${img.dataUrl}" alt="attached" style="height: 12px; width: 12px; object-fit: cover; border-radius: 2px;">
+        ${img.name}
+        <span class="attachment-tag-remove image-remove" data-index="${index}">&times;</span>
       </div>
     `;
   });
   
   attachmentTagsContainer.innerHTML = html;
   
-  attachmentTagsContainer.querySelectorAll('.attachment-tag-remove').forEach(btn => {
+  attachmentTagsContainer.querySelectorAll('.file-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       removeAttachedFile(e.target.dataset.path);
+    });
+  });
+
+  attachmentTagsContainer.querySelectorAll('.image-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.index, 10);
+      attachedImages.splice(idx, 1);
+      renderAttachmentTags();
     });
   });
 }
@@ -944,6 +1046,7 @@ function updateStatus(status, text) {
   chatInput.disabled = isDisabled;
   sendBtn.disabled = isDisabled;
   tokenCountBtn.disabled = isDisabled;
+  if (attachImageBtn) attachImageBtn.disabled = isDisabled;
   
   if (status === 'starting' || status === 'generating') {
     if (stopBtn) stopBtn.style.display = 'flex';
@@ -996,6 +1099,7 @@ function sendMessage() {
   const systemPrompt = systemPromptInput.value;
 
   const currentAttachedFiles = [...attachedFiles];
+  const currentAttachedImages = [...attachedImages];
 
   vscode.postMessage({
     type: 'sendMessage',
@@ -1006,6 +1110,7 @@ function sendMessage() {
     includeActiveFile,
     includeWorkspaceMap,
     attachedFiles: currentAttachedFiles,
+    attachedImages: currentAttachedImages,
     temperature,
     maxTokens,
     topP,
@@ -1013,8 +1118,9 @@ function sendMessage() {
     enableTools: toolsEnabled
   });
 
-  // Clear attached files for the next message
+  // Clear attached files and images for the next message
   attachedFiles = [];
+  attachedImages = [];
   renderAttachmentTags();
 }
 

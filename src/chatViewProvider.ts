@@ -42,6 +42,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  public setChatInput(text: string) {
+    if (this._view) {
+      this._view.webview.postMessage({ type: 'setChatInput', text });
+      this._view.show(true);
+    }
+  }
+
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
@@ -133,6 +140,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             data.includeActiveFile,
             data.includeWorkspaceMap,
             data.attachedFiles,
+            data.attachedImages,
             data.temperature,
             data.maxTokens,
             data.topP,
@@ -210,6 +218,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         case 'browseModelFile':
           await this.browseModelFile();
+          break;
+
+        case 'browseMmprojFile':
+          await this.browseMmprojFile();
           break;
 
         case 'addModel':
@@ -346,6 +358,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async browseMmprojFile() {
+    const result = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: 'Select Projector File',
+      title: 'Select a Multimodal Projector (.gguf) File',
+      filters: {
+        'GGUF Models': ['gguf'],
+        'All Files': ['*']
+      }
+    });
+
+    if (result && result.length > 0) {
+      this._view?.webview.postMessage({
+        type: 'browseMmprojResult',
+        path: result[0].fsPath
+      });
+    }
+  }
+
   private async addModel(modelData: any) {
     const models = this.getModelsFromConfig();
     
@@ -360,6 +393,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       id,
       name: modelData.name,
       modelPath: modelData.modelPath,
+      mmprojPath: modelData.mmprojPath,
       contextSize: modelData.contextSize || 4096,
       gpuLayers: modelData.gpuLayers ?? 99,
       port: modelData.port || 8080,
@@ -383,6 +417,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         ...models[index],
         name: modelData.name,
         modelPath: modelData.modelPath,
+        mmprojPath: modelData.mmprojPath,
         contextSize: modelData.contextSize || 4096,
         gpuLayers: modelData.gpuLayers ?? 99,
         port: modelData.port || 8080,
@@ -446,6 +481,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     cmd += ` -ngl ${gpuLayers}`;
     cmd += ` -c ${contextSize}`;
     cmd += ` --port ${port}`;
+
+    if (model.mmprojPath && model.mmprojPath.trim()) {
+      cmd += ` --mmproj '${model.mmprojPath.trim()}'`;
+    }
     
     if (enableTools) {
       cmd += ' --jinja';
@@ -541,6 +580,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     includeActiveFile: boolean,
     includeWorkspaceMap: boolean,
     attachedFiles?: any[],
+    attachedImages?: any[],
     temperature?: number,
     maxTokens?: number,
     topP?: number,
@@ -671,6 +711,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             enrichedMessages[lastIdx].content = `${attachmentsStr}Question:\n${originalContent}`;
           }
         }
+      }
+    }
+
+    // 5. Process user-attached images (Vision)
+    if (attachedImages && attachedImages.length > 0) {
+      const models = this.getModelsFromConfig();
+      const activeModel = models.find(m => m.id === this.selectedModelId);
+      
+      if (!activeModel?.mmprojPath) {
+        this._view?.webview.postMessage({
+          type: 'error',
+          text: 'This model is not configured for vision. Please attach an mmproj.gguf projector in the model settings, or use a different model.'
+        });
+        // Send a stop message to reset the UI state
+        this._view?.webview.postMessage({ type: 'abortCompletion' });
+        return;
+      }
+
+      const lastIdx = enrichedMessages.length - 1;
+      if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+        const originalContent = enrichedMessages[lastIdx].content;
+        
+        // Convert to array format for multimodal requests
+        const contentArray: any[] = [];
+        
+        // Add text first
+        if (typeof originalContent === 'string') {
+          contentArray.push({ type: 'text', text: originalContent });
+        } else if (Array.isArray(originalContent)) {
+          contentArray.push(...originalContent);
+        }
+        
+        // Add all attached images
+        for (const img of attachedImages) {
+          contentArray.push({
+            type: 'image_url',
+            image_url: { url: img.dataUrl }
+          });
+        }
+        
+        enrichedMessages[lastIdx].content = contentArray;
       }
     }
 
@@ -1080,6 +1161,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </div>
               </div>
 
+              <div class="config-form-group">
+                <label for="form-mmproj-path">Multimodal Projector (.gguf) (Optional)</label>
+                <div class="config-browse-row">
+                  <input type="text" class="config-input" id="form-mmproj-path" placeholder="/path/to/mmproj.gguf (for vision)" spellcheck="false">
+                  <button class="config-browse-btn" id="form-browse-mmproj-btn">Browse</button>
+                </div>
+              </div>
+
               <div class="config-form-row">
                 <div class="config-form-group config-form-half">
                   <label for="form-context-size">Context Size</label>
@@ -1208,10 +1297,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 <div id="mentions-dropdown" class="mentions-dropdown hidden"></div>
               </div>
               <div class="action-buttons">
-                <button class="token-count-btn" id="token-count-btn" title="Count tokens in current input" disabled>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-                  <span id="token-count-label">Tokens</span>
-                </button>
+                <div class="action-buttons-left" style="display: flex; gap: 6px;">
+                  <button class="token-count-btn attach-image-btn" id="attach-image-btn" title="Attach Image" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  </button>
+                  <input type="file" id="image-upload-input" accept="image/*" multiple style="display: none;">
+                  <button class="token-count-btn" id="token-count-btn" title="Count tokens in current input" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                    <span id="token-count-label">Tokens</span>
+                  </button>
+                </div>
                 <div class="action-buttons-right">
                 <button class="clear-btn" id="clear-btn" title="Clear Chat">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/></svg>

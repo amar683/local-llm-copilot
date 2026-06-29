@@ -7,6 +7,11 @@ export class ServerController {
   private terminal: vscode.Terminal | undefined;
   private currentPort = 8080;
   private isStarting = false;
+  private isReady = false;
+
+  public isServerReady(): boolean {
+    return this.isReady;
+  }
 
   // Kill old process if running, then boot new llama-server
   public async startServer(
@@ -20,6 +25,7 @@ export class ServerController {
     }
 
     this.isStarting = true;
+    this.isReady = false;
     this.currentPort = port;
     onStatusChange('starting', 'Stopping previous server...');
 
@@ -48,8 +54,9 @@ export class ServerController {
         await sleep(500);
         
         if (await this.checkServerHealth(port)) {
-          onStatusChange('ready', 'Connected to server');
           this.isStarting = false;
+          this.isReady = true;
+          onStatusChange('ready', 'Server is running and ready for chat.');
           return true;
         }
 
@@ -68,10 +75,13 @@ export class ServerController {
     }
   }
 
-  public async stopServer(): Promise<void> {
+  public async stopServer(onStatusChange?: (status: 'idle') => void): Promise<void> {
     if (this.terminal) {
       this.terminal.sendText('\u0003');
-      await sleep(500);
+    }
+    this.isReady = false;
+    if (onStatusChange) {
+      onStatusChange('idle');
     }
   }
 

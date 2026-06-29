@@ -2,7 +2,7 @@
   "name": "local-llm-sidebar-chat",
   "displayName": "Local LLM Sidebar Chat",
   "description": "Start local llama.cpp servers directly from VS Code and chat with them in a premium sidebar interface.",
-  "version": "0.2.3",
+  "version": "0.3.3",
   "publisher": "amardeeptomar",
   "engines": {
     "vscode": "^1.80.0"
@@ -49,6 +49,11 @@
         "command": "localLlm.clearChat",
         "title": "Local LLM: Clear Chat History",
         "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.inlineChat",
+        "title": "Local LLM: Edit Inline",
+        "category": "Local LLM"
       }
     ],
     "configuration": {
@@ -76,6 +81,10 @@
               "modelPath": {
                 "type": "string",
                 "description": "Absolute path to the .gguf model file (e.g. /Users/you/models/model.gguf)"
+              },
+              "mmprojPath": {
+                "type": "string",
+                "description": "Absolute path to the multimodal projector (.gguf) for vision models (e.g. /Users/you/models/mmproj.gguf)"
               },
               "contextSize": {
                 "type": "number",
