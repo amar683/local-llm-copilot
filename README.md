@@ -34,26 +34,18 @@ To install the extension permanently in your primary VS Code app:
 
 ## Configuration
 
-In your VS Code `settings.json`, you can define your models:
+Models are easily configured directly within the extension's UI—no need to manually edit JSON files!
 
-```json
-{
-  "localLlm.models": [
-    {
-      "id": "aicoder",
-      "name": "Qwen 2.5 Coder 7B (Release)",
-      "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080 -c 8192",
-      "port": 8080
-    },
-    {
-      "id": "ai3b",
-      "name": "Llama 3.2 3B (Release)",
-      "command": "cd '/Users/amardeeptomar/Coding Space/C++ codes/llama.cpp' && ./build-release/bin/llama-server -m ~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -ngl 99 --port 8080",
-      "port": 8080
-    }
-  ]
-}
-```
+1. Open the **Local LLM** panel in your sidebar.
+2. Click the **Model Setup** button (the grid icon) in the footer.
+3. Click **+ Add Model** and fill in the details:
+   - **Model Name:** A friendly name (e.g., "Qwen 2.5 Coder 7B")
+   - **Model Path:** The absolute path to your `.gguf` file
+   - **Context Size:** The context window (e.g., 8192)
+   - **GPU Layers:** The number of layers to offload to the GPU (e.g., 99 for full offload)
+   - **Enable Agent Tools:** **Check this box** if the model has strong function-calling capabilities. This is required to unlock Agent Mode and autonomous file interactions!
+
+Once added, select the model from the dropdown in the footer to automatically start the local server and begin chatting.
 
 ## How to move Chat to the Right Sidebar
 1. Open the Chat view container by clicking the discussion bubble icon in the primary (left) sidebar.
