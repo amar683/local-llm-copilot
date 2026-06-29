@@ -1576,12 +1576,36 @@ function handleTokenizeResult(count) {
 
 function parseMarkdown(text, isComplete = false) {
   if (!text) return '';
+  
+  // 1. Robustly extract think blocks before escaping HTML
+  // This ensures unclosed <think> tags won't break the DOM structure during streaming
+  const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/gi;
+  let match;
+  let lastIndex = 0;
+  let finalHtml = '';
+  
+  while ((match = thinkRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      finalHtml += parseMarkdownBasic(text.substring(lastIndex, match.index));
+    }
+    
+    const thinkContent = parseMarkdownBasic(match[1]);
+    finalHtml += `<details class="think-block" ${isComplete ? '' : 'open'}><summary>Thinking...</summary><div class="think-content">${thinkContent}</div></details>`;
+    
+    lastIndex = thinkRegex.lastIndex;
+  }
+  
+  if (lastIndex < text.length) {
+    finalHtml += parseMarkdownBasic(text.substring(lastIndex));
+  }
+  
+  return finalHtml;
+}
+
+function parseMarkdownBasic(text) {
+  if (!text) return '';
   let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
-  // Parse <think> tags (which are now &lt;think&gt;)
-  html = html.replace(/&lt;think&gt;/gi, `<details class="think-block" ${isComplete ? '' : 'open'}><summary>Thinking...</summary><div class="think-content">`)
-             .replace(/&lt;\/think&gt;/gi, '</div></details>');
-
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
     const language = lang || 'code';
     const nonce = Math.random().toString(36).substring(7);
