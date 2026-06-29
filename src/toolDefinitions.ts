@@ -63,6 +63,13 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
     icon: '⚙️',
     description: 'Use VS Code language features like diagnostics and references',
     tools: ['get_diagnostics', 'find_references', 'go_to_definition']
+  },
+  {
+    id: 'agent',
+    name: 'Agent',
+    icon: '🤖',
+    description: 'Plan, track progress, and manage working memory (Agent Mode only)',
+    tools: ['agent_plan', 'agent_update_step', 'agent_scratchpad', 'agent_done']
   }
 ];
 
@@ -415,6 +422,84 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         required: ['path', 'line', 'column']
       }
     }
+  },
+  // ═══ AGENT TOOLS ══════════════════════════════════════════════════════════
+  {
+    type: 'function',
+    function: {
+      name: 'agent_plan',
+      description: 'Create or update the execution plan for the current goal. Use this to break down a complex goal into smaller steps.',
+      parameters: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            description: 'The steps to achieve the goal.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Unique step ID (e.g., "step-1")' },
+                description: { type: 'string', description: 'Description of the step' },
+                status: { type: 'string', description: 'Status of the step', enum: ['pending', 'in-progress', 'completed', 'failed', 'skipped'] },
+                result: { type: 'string', description: 'Optional summary of the result of this step' }
+              },
+              required: ['id', 'description', 'status']
+            }
+          },
+          currentStepIndex: {
+            type: 'number',
+            description: 'The index of the currently active step (0-indexed).'
+          }
+        },
+        required: ['steps', 'currentStepIndex']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agent_update_step',
+      description: 'Update the status or result of a specific step in the current plan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          stepId: { type: 'string', description: 'The ID of the step to update' },
+          status: { type: 'string', description: 'New status for the step', enum: ['pending', 'in-progress', 'completed', 'failed', 'skipped'] },
+          result: { type: 'string', description: 'Optional summary of the result of this step' }
+        },
+        required: ['stepId', 'status']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agent_scratchpad',
+      description: 'Update your working memory. Use this to take notes, store findings, or track intermediate results.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'Action to perform on scratchpad', enum: ['append', 'replace', 'clear'] },
+          text: { type: 'string', description: 'The text to append or replace with' }
+        },
+        required: ['action']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agent_done',
+      description: 'Signal that the overall goal is complete or cannot be completed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', description: 'True if the goal was successfully completed' },
+          message: { type: 'string', description: 'A final summary message for the user' }
+        },
+        required: ['success', 'message']
+      }
+    }
   }
 ];
 
@@ -455,3 +540,24 @@ export const AGENTIC_SYSTEM_PROMPT = `You are an expert coding assistant running
 - Be precise with edit_file search text — it must match exactly.
 - Explain what you're doing and why before making changes.
 - After completing changes, summarize what you did.`;
+
+/**
+ * Agent mode system prompt that instructs the model on autonomous execution.
+ */
+export const AGENT_MODE_SYSTEM_PROMPT = `You are an expert autonomous coding agent running locally in VS Code.
+Your purpose is to achieve the user's stated goal by breaking it down into steps, executing them, and reflecting on your progress.
+
+## Agent Mode Workflow
+1. **Plan**: When given a new goal, use \`agent_plan\` to create a step-by-step plan.
+2. **Execute**: Work through the steps one by one. Use \`agent_update_step\` to mark the current step as "in-progress".
+3. **Use Tools**: Use file, execute, and web tools to accomplish the step.
+4. **Reflect**: After attempting a step, use \`agent_update_step\` to mark it "completed" or "failed" with a result.
+5. **Remember**: Use \`agent_scratchpad\` to keep track of important findings or context you don't want to forget.
+6. **Finish**: When all steps are done, or if the goal is unachievable, use \`agent_done\`.
+
+## Important Rules
+- Do NOT try to do everything in one step. Break tasks down.
+- Maintain your plan. If things go wrong, use \`agent_plan\` to adjust the plan.
+- Use \`agent_scratchpad\` to save context since you might run for many iterations and earlier messages might be truncated.
+- Before executing destructive operations (write_file, edit_file, run_command), think carefully. The user will be asked to confirm these actions.
+- Always use the provided tools to interact with the codebase. Do not assume you know the contents of files.`;

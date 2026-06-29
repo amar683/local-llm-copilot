@@ -212,29 +212,48 @@ export class ServerController {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(postData)
         },
-        timeout: 30000 // embeddings can take a while for large texts
+        timeout: 60000 // embeddings can take a while for large texts
       }, (res) => {
         let body = '';
         res.on('data', chunk => body += chunk);
         res.on('end', () => {
           try {
             const data = JSON.parse(body);
+
+            // llama.cpp returns { error: { message: "..." } } when embeddings are not supported
+            if (data.error) {
+              const errMsg = data.error.message || data.error || JSON.stringify(data.error);
+              reject(new Error(`Embedding server error: ${errMsg}. Hint: Make sure llama-server was started with the --embedding flag.`));
+              return;
+            }
+
+            if (res.statusCode !== 200) {
+              reject(new Error(`Embedding request failed with HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
+              return;
+            }
+
             if (data.data && Array.isArray(data.data)) {
               // Return array of embedding vectors
-              resolve(data.data.map((d: any) => d.embedding));
+              const embeddings = data.data.map((d: any) => d.embedding);
+              // Validate that we actually got vectors
+              if (embeddings.length > 0 && Array.isArray(embeddings[0]) && embeddings[0].length > 0) {
+                resolve(embeddings);
+              } else {
+                reject(new Error('Embedding vectors are empty. The model may not support embeddings. Try starting with --embedding flag or use a dedicated embedding model.'));
+              }
             } else {
-              reject(new Error('Invalid embedding response format'));
+              reject(new Error(`Unexpected embedding response: ${body.substring(0, 300)}. Make sure llama-server was started with --embedding flag.`));
             }
           } catch (e) {
-            reject(new Error(`Failed to parse embedding response: ${e}`));
+            reject(new Error(`Failed to parse embedding response: ${body.substring(0, 200)}`));
           }
         });
       });
 
-      req.on('error', (err) => reject(err));
+      req.on('error', (err) => reject(new Error(`Embedding request failed: ${err.message}. Is the server running?`)));
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error('Timeout calling /v1/embeddings'));
+        reject(new Error('Timeout calling /v1/embeddings (60s). Try smaller batch sizes or a faster model.'));
       });
       req.write(postData);
       req.end();

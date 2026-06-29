@@ -27,6 +27,10 @@ const workspaceLabel = document.getElementById('workspace-label');
 const toolsToggleRow = document.getElementById('tools-toggle-row');
 const toggleToolsBtn = document.getElementById('toggle-tools');
 
+const modeToggleRow = document.getElementById('mode-toggle-row');
+const modeChatBtn = document.getElementById('mode-chat-btn');
+const modeAgentBtn = document.getElementById('mode-agent-btn');
+
 const settingsToggleBtn = document.getElementById('settings-toggle-btn');
 const settingsPanel = document.getElementById('settings-panel');
 const tempInput = document.getElementById('settings-temp');
@@ -88,6 +92,9 @@ let isConfigView = false;
 let pendingToolCalls = [];
 let editingModelId = null; // null = adding new, string = editing existing
 
+let agentMode = false;
+let currentAgentPlan = null;
+
 let sessionsList = [];
 let currentSessionId = '';
 
@@ -133,7 +140,38 @@ toggleToolsBtn.addEventListener('click', () => {
   if (configureToolsBtn) {
     configureToolsBtn.style.display = toolsEnabled ? 'flex' : 'none';
   }
+  
+  if (modeToggleRow) {
+      if (toolsEnabled) {
+          modeToggleRow.style.display = 'flex';
+      } else {
+          modeToggleRow.style.display = 'none';
+          if (agentMode && modeChatBtn) {
+              modeChatBtn.click();
+          }
+      }
+  }
 });
+
+if (modeChatBtn && modeAgentBtn) {
+  modeChatBtn.addEventListener('click', () => {
+    agentMode = false;
+    modeChatBtn.classList.add('active');
+    modeAgentBtn.classList.remove('active');
+    chatInput.placeholder = "Type a message... (Type @ to attach files)";
+    chatInput.style.border = '1px solid var(--border-color)';
+    chatInput.style.boxShadow = 'none';
+  });
+
+  modeAgentBtn.addEventListener('click', () => {
+    agentMode = true;
+    modeAgentBtn.classList.add('active');
+    modeChatBtn.classList.remove('active');
+    chatInput.placeholder = "Describe a goal... (e.g. 'Refactor auth to use JWT')";
+    chatInput.style.border = '1px solid var(--accent-color)';
+    chatInput.style.boxShadow = '0 0 8px rgba(137, 180, 250, 0.2)';
+  });
+}
 
 // Configure Tools button
 if (configureToolsBtn) {
@@ -415,6 +453,14 @@ if (newSessionBtn) {
   });
 }
 
+const sessionsClearAllBtn = document.getElementById('sessions-clear-all-btn');
+if (sessionsClearAllBtn) {
+  sessionsClearAllBtn.addEventListener('click', () => {
+    vscode.postMessage({ type: 'clearAllSessions' });
+    startNewSession();
+  });
+}
+
 function startNewSession() {
   currentSessionId = Date.now().toString();
   chatHistory = [];
@@ -468,6 +514,56 @@ function renderSessions() {
     content.appendChild(time);
     item.appendChild(dot);
     item.appendChild(content);
+
+    const actions = document.createElement('div');
+    actions.className = 'session-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'session-action-btn';
+    renameBtn.title = 'Rename Chat';
+    renameBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    renameBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Prompt user for new title (in vscode extension webviews, window.prompt is not supported, so we simulate it or just let the user edit it inline)
+      // Since window.prompt is blocked by CSP, we can change the title div into an input field temporarily.
+      const currentTitle = title.textContent;
+      title.innerHTML = `<input type="text" class="session-rename-input" value="${escapeHtml(currentTitle)}" />`;
+      const input = title.querySelector('input');
+      input.focus();
+      input.select();
+      
+      const saveRename = () => {
+        const newTitle = input.value.trim() || 'New Chat';
+        title.textContent = newTitle;
+        vscode.postMessage({ type: 'renameSession', sessionId: session.id, newTitle });
+      };
+
+      input.addEventListener('blur', saveRename);
+      input.addEventListener('keydown', (ke) => {
+        if (ke.key === 'Enter') {
+          saveRename();
+        } else if (ke.key === 'Escape') {
+          title.textContent = currentTitle;
+        }
+      });
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'session-action-btn';
+    deleteBtn.title = 'Delete Chat';
+    deleteBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: 'deleteSession', sessionId: session.id });
+      // If we deleted the active session, start a new one
+      if (session.id === currentSessionId) {
+        startNewSession();
+      }
+    });
+
+    actions.appendChild(renameBtn);
+    actions.appendChild(deleteBtn);
+    item.appendChild(actions);
 
     item.addEventListener('click', () => {
       loadSession(session);
@@ -621,6 +717,12 @@ window.addEventListener('message', e => {
       break;
     case 'toolCallResult':
       handleToolCallResult(msg);
+      break;
+    case 'agentPlanUpdate':
+      handleAgentPlanUpdate(msg);
+      break;
+    case 'agentStatusChange':
+      handleAgentStatusChange(msg);
       break;
     case 'turnEditsComplete':
       handleTurnEditsComplete(msg);
@@ -1084,6 +1186,16 @@ function updateStatus(status, text) {
   }
   
   openWebUIBtn.style.display = isDisabled ? 'none' : 'flex';
+  
+  if (currentModelHasTools && !isDisabled) {
+    toolsToggleRow.style.display = 'flex';
+    if (toolsEnabled && modeToggleRow) {
+      modeToggleRow.style.display = 'flex';
+    }
+  } else {
+    toolsToggleRow.style.display = 'none';
+    if (modeToggleRow) modeToggleRow.style.display = 'none';
+  }
 }
 
 function sendMessage() {
@@ -1139,7 +1251,8 @@ function sendMessage() {
     maxTokens,
     topP,
     systemPrompt,
-    enableTools: toolsEnabled
+    enableTools: toolsEnabled,
+    agentMode
   });
 
   // Clear attached files and images for the next message
@@ -1778,4 +1891,89 @@ function saveToolConfig() {
 
   // Send to backend
   vscode.postMessage({ type: 'updateDisabledTools', disabledTools });
+}
+
+// ─── Agent UI ───────────────────────────────────────────────────────────────
+
+function handleAgentPlanUpdate(msg) {
+  if (!msg.plan) return;
+  currentAgentPlan = msg.plan;
+  
+  let planBlock = document.getElementById('agent-plan-block');
+  
+  if (!planBlock) {
+    planBlock = document.createElement('div');
+    planBlock.id = 'agent-plan-block';
+    planBlock.className = 'agent-plan-block';
+    
+    // Add to chat history visually
+    if (currentAssistantBubble) {
+      currentAssistantBubble.appendChild(planBlock);
+    } else {
+      currentAssistantBubble = appendBubble('assistant', '');
+      currentAssistantBubble.appendChild(planBlock);
+    }
+  }
+  
+  const stepsHtml = msg.plan.steps.map((step, idx) => {
+    let icon = '⬜';
+    if (step.status === 'in-progress') icon = '🔄';
+    if (step.status === 'completed') icon = '✅';
+    if (step.status === 'failed') icon = '❌';
+    if (step.status === 'skipped') icon = '⏭️';
+    
+    let isCurrent = idx === msg.plan.currentStepIndex ? 'current-step' : '';
+    let spinClass = step.status === 'in-progress' ? 'icon-spin' : '';
+    
+    return `
+      <div class="agent-plan-step ${isCurrent}">
+        <span class="step-icon ${spinClass}">${icon}</span>
+        <span class="step-text">${idx + 1}. ${escapeHtml(step.description)}</span>
+      </div>
+    `;
+  }).join('');
+  
+  planBlock.innerHTML = `
+    <div class="agent-plan-header">
+      <span class="agent-plan-title">🤖 Agent Plan: ${escapeHtml(msg.plan.goal)}</span>
+    </div>
+    <div class="agent-plan-steps">
+      ${stepsHtml}
+    </div>
+  `;
+  
+  scrollToBottom();
+}
+
+function handleAgentStatusChange(msg) {
+  let statusBlock = document.getElementById('agent-status-indicator');
+  
+  if (!statusBlock) {
+    statusBlock = document.createElement('div');
+    statusBlock.id = 'agent-status-indicator';
+    statusBlock.className = 'agent-status-indicator';
+    messagesContainer.appendChild(statusBlock);
+  }
+  
+  let spinnerHtml = '';
+  if (['planning', 'executing'].includes(msg.status)) {
+    spinnerHtml = '<span class="agent-loader"></span>';
+  } else if (msg.status === 'completed') {
+    spinnerHtml = '✅';
+  } else if (msg.status === 'failed') {
+    spinnerHtml = '❌';
+  } else if (msg.status === 'paused') {
+    spinnerHtml = '⏸️';
+  }
+  
+  statusBlock.innerHTML = `${spinnerHtml} ${escapeHtml(msg.message || msg.status)}`;
+  
+  // If we just finished, remove it after a bit and clean up
+  if (['completed', 'failed'].includes(msg.status)) {
+    stopGenIcon.classList.add('hidden');
+    sendIcon.classList.remove('hidden');
+    isGenerating = false;
+  }
+  
+  scrollToBottom();
 }

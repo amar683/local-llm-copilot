@@ -2,7 +2,33 @@ import * as vscode from 'vscode';
 import { ServerController } from './serverController';
 import * as http from 'http';
 
+class InlineEditProvider implements vscode.TextDocumentContentProvider {
+  private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this._onDidChange.event;
+
+  private contents = new Map<string, string>();
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return this.contents.get(uri.path) || '';
+  }
+
+  setContent(path: string, content: string) {
+    this.contents.set(path, content);
+    this._onDidChange.fire(vscode.Uri.parse(`local-llm-inline:${path}`));
+  }
+}
+
+// Store pending edits so the accept command knows what to do
+export const pendingInlineEdits = new Map<string, {
+  originalUri: vscode.Uri,
+  selection: vscode.Selection,
+  newCode: string
+}>();
+
 export function registerInlineChat(context: vscode.ExtensionContext, serverController: ServerController) {
+  const provider = new InlineEditProvider();
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('local-llm-inline', provider));
+
   const disposable = vscode.commands.registerCommand('localLlm.inlineChat', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -10,7 +36,7 @@ export function registerInlineChat(context: vscode.ExtensionContext, serverContr
       return;
     }
 
-    if (serverController.currentStatus !== 'ready') {
+    if (!serverController.isServerReady()) {
       vscode.window.showErrorMessage('Local LLM Server is not ready. Please start a model first.');
       return;
     }
@@ -93,16 +119,29 @@ Do NOT include any explanations, greetings, or pleasantries. JUST THE RAW CODE.`
                 }
               }
 
-              // Apply edit
-              const success = await editor.edit(editBuilder => {
-                editBuilder.replace(selection, newCode);
-              });
+              // Create full file content with replacement
+              const fullText = editor.document.getText();
+              const before = fullText.substring(0, editor.document.offsetAt(selection.start));
+              const after = fullText.substring(editor.document.offsetAt(selection.end));
+              const newFullText = before + newCode + after;
+
+              const editId = Date.now().toString();
+              const virtualPath = `/${editId}/${editor.document.fileName.split('/').pop() || 'edit'}`;
+              const virtualUri = vscode.Uri.parse(`local-llm-inline:${virtualPath}`);
               
-              if (success) {
-                vscode.window.showInformationMessage('Code updated by Local LLM.');
-              } else {
-                vscode.window.showErrorMessage('Failed to apply edit.');
-              }
+              provider.setContent(virtualPath, newFullText);
+              pendingInlineEdits.set(virtualPath, {
+                originalUri: editor.document.uri,
+                selection,
+                newCode
+              });
+
+              await vscode.commands.executeCommand(
+                'vscode.diff',
+                editor.document.uri,
+                virtualUri,
+                'Local LLM: Review Edit'
+              );
               resolve();
             } catch (e) {
               vscode.window.showErrorMessage('Failed to parse LLM response.');
@@ -128,4 +167,49 @@ Do NOT include any explanations, greetings, or pleasantries. JUST THE RAW CODE.`
   });
 
   context.subscriptions.push(disposable);
+
+  context.subscriptions.push(vscode.commands.registerCommand('localLlm.acceptInlineEdit', async (uri: vscode.Uri) => {
+    let virtualUri = uri;
+    if (!virtualUri) {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.uri.scheme === 'local-llm-inline') {
+        virtualUri = activeEditor.document.uri;
+      }
+    }
+
+    if (!virtualUri || virtualUri.scheme !== 'local-llm-inline') return;
+
+    const pendingEdit = pendingInlineEdits.get(virtualUri.path);
+    if (!pendingEdit) {
+      vscode.window.showErrorMessage('Edit state lost.');
+      return;
+    }
+
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+    const doc = await vscode.workspace.openTextDocument(pendingEdit.originalUri);
+    const editor = await vscode.window.showTextDocument(doc);
+    
+    // Apply the edit to the original document
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    workspaceEdit.replace(pendingEdit.originalUri, pendingEdit.selection, pendingEdit.newCode);
+    await vscode.workspace.applyEdit(workspaceEdit);
+    
+    pendingInlineEdits.delete(virtualUri.path);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('localLlm.rejectInlineEdit', async (uri: vscode.Uri) => {
+    let virtualUri = uri;
+    if (!virtualUri) {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.uri.scheme === 'local-llm-inline') {
+        virtualUri = activeEditor.document.uri;
+      }
+    }
+    
+    if (virtualUri && virtualUri.scheme === 'local-llm-inline') {
+      pendingInlineEdits.delete(virtualUri.path);
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    }
+  }));
 }

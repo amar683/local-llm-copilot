@@ -69,8 +69,70 @@
         "command": "localLlm.inlineChat",
         "title": "Local LLM: Edit Inline",
         "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.openChat",
+        "title": "Local LLM: Open Chat",
+        "category": "Local LLM"
+      },
+      {
+        "command": "localLlm.acceptInlineEdit",
+        "title": "Accept Inline Edit",
+        "category": "Local LLM",
+        "icon": "$(check)"
+      },
+      {
+        "command": "localLlm.rejectInlineEdit",
+        "title": "Reject Inline Edit",
+        "category": "Local LLM",
+        "icon": "$(close)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "localLlmChatView.focus",
+        "key": "ctrl+l",
+        "mac": "cmd+l"
+      },
+      {
+        "command": "localLlm.inlineChat",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "localLlm.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "localLlm.inlineChat",
+          "group": "navigation",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "localLlm.explainCode",
+          "group": "navigation",
+          "when": "editorHasSelection"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "localLlm.acceptInlineEdit",
+          "when": "resourceScheme == 'local-llm-inline'",
+          "group": "navigation"
+        },
+        {
+          "command": "localLlm.rejectInlineEdit",
+          "when": "resourceScheme == 'local-llm-inline'",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Local LLM Sidebar Chat",
       "properties": {
@@ -88,6 +150,11 @@
           "type": "number",
           "default": 200,
           "description": "The overlap (in characters) between adjacent code chunks when indexing."
+        },
+        "localLlm.enableHoverSummary": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable AI-powered hover summaries for code symbols (like GitHub Copilot). Queries your local LLM when you hover over a symbol."
         },
         "localLlm.llamaCppPath": {
           "type": "string",

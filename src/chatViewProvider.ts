@@ -3,7 +3,8 @@ import * as http from 'http';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ServerController } from './serverController';
-import { TOOL_DEFINITIONS, TOOL_CATEGORIES, AGENTIC_SYSTEM_PROMPT } from './toolDefinitions';
+import { TOOL_DEFINITIONS, TOOL_CATEGORIES, AGENTIC_SYSTEM_PROMPT, AGENT_MODE_SYSTEM_PROMPT } from './toolDefinitions';
+import { AgentController } from './agentController';
 import { executeToolCall, initTools } from './toolExecutor';
 import { SemanticSearch } from './semanticSearch';
 
@@ -28,6 +29,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // Keyed by file path (fsPath), stores the original content before any edits in this turn.
   private turnFileBackups: Map<string, { uri: vscode.Uri, originalContent: string, addedLines: number, removedLines: number }> = new Map();
   private disabledTools: Set<string> = new Set();
+  
+  private agentController: AgentController | null = null;
 
   private currentSessionId: string = '';
 
@@ -97,6 +100,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.deleteSession(data.sessionId);
           break;
 
+        case 'renameSession':
+          this.renameSession(data.sessionId, data.newTitle);
+          break;
+
+        case 'clearAllSessions':
+          this.clearAllSessions();
+          break;
+
         case 'selectModel':
           this.selectedModelId = data.modelId;
           const models = this.getModelsFromConfig();
@@ -157,6 +168,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.activeRequest = undefined;
             this._view?.webview.postMessage({ type: 'streamEnd' });
           }
+          if (this.agentController) {
+            this.agentController.abort();
+          }
+          break;
+
+        case 'agentPause':
+          if (this.agentController) this.agentController.pause();
+          break;
+
+        case 'agentResume':
+          if (this.agentController) this.agentController.resume();
           break;
 
         case 'indexCodebase':
@@ -314,6 +336,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const sessions = this.getSessions();
     const newSessions = sessions.filter(s => s.id !== sessionId);
     this._context.globalState.update('localLlm.sessions', newSessions);
+    this.sendSessionsToWebview();
+  }
+
+  private renameSession(sessionId: string, newTitle: string) {
+    const sessions = this.getSessions();
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      session.title = newTitle;
+      this._context.globalState.update('localLlm.sessions', sessions);
+      this.sendSessionsToWebview();
+    }
+  }
+
+  private clearAllSessions() {
+    this._context.globalState.update('localLlm.sessions', []);
     this.sendSessionsToWebview();
   }
 
@@ -614,7 +651,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     maxTokens?: number,
     topP?: number,
     systemPrompt?: string,
-    enableTools?: boolean
+    enableTools?: boolean,
+    agentMode?: boolean
   ) {
     if (this.currentServerStatus !== 'ready') {
       this._view?.webview.postMessage({
@@ -634,7 +672,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // If tools are enabled, use the agentic system prompt as base
     if (useTools) {
       const customSystemAddition = systemPrompt?.trim() ? `\n\nAdditional user instructions:\n${systemPrompt.trim()}` : '';
-      const fullSystemPrompt = AGENTIC_SYSTEM_PROMPT + customSystemAddition;
+      const baseSystemPrompt = agentMode ? AGENT_MODE_SYSTEM_PROMPT : AGENTIC_SYSTEM_PROMPT;
+      let fullSystemPrompt = baseSystemPrompt + customSystemAddition;
+      
+      // If agent mode and we have scratchpad, append it
+      if (agentMode && this.agentController) {
+          const memory = this.agentController.getMemory();
+          if (memory.scratchpad) {
+              fullSystemPrompt += `\n\n## Scratchpad (Working Memory)\n${memory.scratchpad}`;
+          }
+      }
       
       if (enrichedMessages.length > 0 && enrichedMessages[0].role === 'system') {
         enrichedMessages[0] = { role: 'system', content: fullSystemPrompt };
@@ -820,11 +867,107 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       workspaceMapAttached
     });
 
-    if (useTools) {
+    if (agentMode && useTools) {
+      await this.runAgentMode(enrichedMessages, temperature, maxTokens, topP);
+    } else if (useTools) {
       await this.runAgenticLoop(enrichedMessages, temperature, maxTokens, topP);
     } else {
       await this.streamChatCompletion(enrichedMessages, temperature, maxTokens, topP, false);
     }
+  }
+
+  private async runAgentMode(
+    messages: any[],
+    temperature?: number,
+    maxTokens?: number,
+    topP?: number
+  ) {
+    if (!this.agentController) {
+      this.agentController = new AgentController();
+    }
+
+    // Extract the goal from the last user message
+    const lastUserMessage = messages.slice().reverse().find(m => m.role === 'user');
+    const goal = lastUserMessage ? lastUserMessage.content : 'Complete task';
+
+    await this.agentController.runAgentTask(
+      goal,
+      messages,
+      async (msgs, collectToolCalls) => {
+        // Need to update the system prompt with latest scratchpad each iteration
+        if (msgs.length > 0 && msgs[0].role === 'system') {
+           let sysPrompt = msgs[0].content as string;
+           sysPrompt = sysPrompt.replace(/\n\n## Scratchpad \(Working Memory\)[\s\S]*$/, '');
+           const memory = this.agentController!.getMemory();
+           if (memory.scratchpad) {
+               sysPrompt += `\n\n## Scratchpad (Working Memory)\n${memory.scratchpad}`;
+           }
+           msgs[0] = { role: 'system', content: sysPrompt };
+        }
+        
+        this._view?.webview.postMessage({ type: 'streamStart' });
+        const result = await this.streamChatCompletion(msgs, temperature, maxTokens, topP, collectToolCalls);
+        if (!result) this._view?.webview.postMessage({ type: 'streamEnd' });
+        return result;
+      },
+      (toolName, toolArgs, callId) => {
+        this._view?.webview.postMessage({
+          type: 'toolCallStart',
+          toolName,
+          toolArgs,
+          callId
+        });
+      },
+      (toolName, toolArgs, callId, toolResult) => {
+        if (toolResult.needsConfirmation && toolResult.originalContent && toolResult.originalUri) {
+          const fsPath = toolResult.originalUri.fsPath;
+          if (this.turnFileBackups.has(fsPath)) {
+            const backup = this.turnFileBackups.get(fsPath)!;
+            backup.addedLines += toolResult.addedLines || 0;
+            backup.removedLines += toolResult.removedLines || 0;
+          } else {
+            this.turnFileBackups.set(fsPath, {
+              uri: toolResult.originalUri,
+              originalContent: toolResult.originalContent,
+              addedLines: toolResult.addedLines || 0,
+              removedLines: toolResult.removedLines || 0
+            });
+          }
+        }
+        
+        this._view?.webview.postMessage({
+          type: 'toolCallResult',
+          toolName,
+          callId,
+          success: toolResult.success,
+          output: toolResult.output,
+          denied: toolResult.denied,
+          addedLines: toolResult.addedLines,
+          removedLines: toolResult.removedLines
+        });
+      },
+      (plan) => {
+        this._view?.webview.postMessage({ type: 'agentPlanUpdate', plan });
+      },
+      (status, message) => {
+        this._view?.webview.postMessage({ type: 'agentStatusChange', status, message });
+        if (status === 'completed' || status === 'failed') {
+          this._view?.webview.postMessage({ type: 'streamEnd' });
+          if (this.turnFileBackups.size > 0) {
+            const editsList = Array.from(this.turnFileBackups.entries()).map(([fsPath, backup]) => {
+              const path = require('path');
+              return {
+                fileName: path.basename(fsPath),
+                filePath: fsPath,
+                addedLines: backup.addedLines,
+                removedLines: backup.removedLines
+              };
+            });
+            this._view?.webview.postMessage({ type: 'turnEditsComplete', edits: editsList });
+          }
+        }
+      }
+    );
   }
 
   /**
@@ -1282,6 +1425,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     <button class="sessions-action-btn" id="sessions-filter-btn" title="Filter">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
                     </button>
+                    <button class="sessions-action-btn" id="sessions-clear-all-btn" title="Clear All Sessions" style="color: var(--status-error);">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
                   </div>
                 </div>
                 <div class="sessions-list" id="sessions-list">
@@ -1322,6 +1468,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <div id="selection-bar" class="selection-bar hidden">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 <span id="selection-text">Attached: index.ts (10 lines)</span>
+              </div>
+              
+              <div class="mode-toggle-row" id="mode-toggle-row" style="display: none;">
+                <div class="mode-toggle">
+                  <button class="mode-btn active" id="mode-chat-btn" data-mode="chat">
+                    💬 Chat
+                  </button>
+                  <button class="mode-btn" id="mode-agent-btn" data-mode="agent">
+                    🤖 Agent
+                  </button>
+                </div>
               </div>
 
               <div class="tools-toggle-row" id="tools-toggle-row" style="display: none;">

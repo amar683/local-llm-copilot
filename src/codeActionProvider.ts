@@ -64,7 +64,17 @@ export function registerCodeActions(context: vscode.ExtensionContext, serverCont
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('localLlm.explainCode', async (document: vscode.TextDocument, range: vscode.Range) => {
+    vscode.commands.registerCommand('localLlm.explainCode', async (document?: vscode.TextDocument, range?: vscode.Range) => {
+      if (!document || !range) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.selection.isEmpty) {
+          vscode.window.showInformationMessage('Please select some code to explain.');
+          return;
+        }
+        document = editor.document;
+        range = editor.selection;
+      }
+      
       const text = document.getText(range);
       if (!text) return;
       

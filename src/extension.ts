@@ -4,6 +4,7 @@ import { ChatViewProvider } from './chatViewProvider';
 
 import { registerInlineChat } from './inlineChatProvider';
 import { registerCodeActions } from './codeActionProvider';
+import { registerHoverProvider } from './hoverProvider';
 
 export function activate(context: vscode.ExtensionContext) {
   const controller = new ServerController();
@@ -11,6 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   registerInlineChat(context, controller);
   registerCodeActions(context, controller, provider);
+  registerHoverProvider(context, controller);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider),
@@ -22,6 +24,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('localLlm.indexCodebase', async () => {
       await provider.indexCodebase();
+    }),
+
+    vscode.commands.registerCommand('localLlm.openChat', async () => {
+      await vscode.commands.executeCommand('localLlmChatView.focus');
     }),
     
     vscode.workspace.onDidChangeConfiguration(e => {
