@@ -2,7 +2,7 @@
   "name": "local-llm-sidebar-chat",
   "displayName": "Local LLM Sidebar Chat",
   "description": "Start local llama.cpp servers directly from VS Code and chat with them in a premium sidebar interface.",
-  "version": "0.1.5",
+  "version": "0.2.3",
   "publisher": "amardeeptomar",
   "engines": {
     "vscode": "^1.80.0"

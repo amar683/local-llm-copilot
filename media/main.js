@@ -52,6 +52,13 @@ const backToSessionsBtn = document.getElementById('back-to-sessions-btn');
 const sessionsCloseBtn = document.getElementById('sessions-close-btn');
 const sessionsListContainer = document.getElementById('sessions-list');
 
+// Tool configuration elements
+const configureToolsBtn = document.getElementById('configure-tools-btn');
+const toolConfigModal = document.getElementById('tool-config-modal');
+const toolConfigBody = document.getElementById('tool-config-body');
+const toolConfigClose = document.getElementById('tool-config-close');
+const toolsConfigCount = document.getElementById('tools-config-count');
+
 // Config view elements
 const configToggleBtn = document.getElementById('config-toggle-btn');
 const configView = document.getElementById('config-view');
@@ -84,6 +91,19 @@ let editingModelId = null; // null = adding new, string = editing existing
 let sessionsList = [];
 let currentSessionId = '';
 
+// Mentions state
+const mentionsDropdown = document.getElementById('mentions-dropdown');
+const attachmentTagsContainer = document.getElementById('attachment-tags');
+let workspaceFiles = []; // populated from backend
+let attachedFiles = []; // array of { path, basename }
+let mentionsState = {
+  active: false,
+  query: '',
+  startIndex: -1,
+  selectedIndex: 0,
+  filteredFiles: []
+};
+
 // ─── Event Listeners ────────────────────────────────────────────────────────
 
 toggleActiveFileBtn.addEventListener('click', () => {
@@ -97,7 +117,29 @@ toggleWorkspaceBtn.addEventListener('click', () => {
 toggleToolsBtn.addEventListener('click', () => {
   toggleToolsBtn.classList.toggle('active');
   toolsEnabled = toggleToolsBtn.classList.contains('active');
+  // Show/hide the configure tools button based on tools enabled state
+  if (configureToolsBtn) {
+    configureToolsBtn.style.display = toolsEnabled ? 'flex' : 'none';
+  }
 });
+
+// Configure Tools button
+if (configureToolsBtn) {
+  configureToolsBtn.addEventListener('click', () => {
+    if (!toolConfigModal.classList.contains('hidden')) {
+      toolConfigModal.classList.add('hidden');
+    } else {
+      vscode.postMessage({ type: 'getToolConfig' });
+    }
+  });
+}
+
+// Close tool config modal
+if (toolConfigClose) {
+  toolConfigClose.addEventListener('click', () => {
+    toolConfigModal.classList.add('hidden');
+  });
+}
 
 settingsToggleBtn.addEventListener('click', () => {
   settingsToggleBtn.classList.toggle('active');
@@ -379,7 +421,7 @@ function loadSession(session) {
       
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.innerHTML = parseMarkdown(msg.content || '');
+      bubble.innerHTML = parseMarkdown(msg.content || '', true);
       wrapper.appendChild(bubble);
       
       messagesContainer.appendChild(wrapper);
@@ -529,6 +571,15 @@ window.addEventListener('message', e => {
       break;
     case 'modelDeleted':
       break;
+    case 'toolConfig':
+      renderToolConfigModal(msg.categories, msg.disabledTools);
+      break;
+    case 'workspaceFiles':
+      workspaceFiles = msg.files || [];
+      if (mentionsState.active) {
+        renderMentionsDropdown();
+      }
+      break;
   }
 });
 
@@ -626,6 +677,31 @@ clearBtn.addEventListener('click', () => {
 });
 
 chatInput.addEventListener('keydown', (e) => {
+  if (mentionsState.active) {
+    if (e.key === 'Escape') {
+      mentionsState.active = false;
+      renderMentionsDropdown();
+      e.preventDefault();
+      return;
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      mentionsState.selectedIndex = (mentionsState.selectedIndex + 1) % mentionsState.filteredFiles.length;
+      renderMentionsDropdown();
+      return;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      mentionsState.selectedIndex = (mentionsState.selectedIndex - 1 + mentionsState.filteredFiles.length) % mentionsState.filteredFiles.length;
+      renderMentionsDropdown();
+      return;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (mentionsState.filteredFiles.length > 0) {
+        addAttachedFile(mentionsState.filteredFiles[mentionsState.selectedIndex]);
+      }
+      return;
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     if (!isGenerating && chatInput.value.trim() && !chatInput.disabled) {
@@ -637,7 +713,138 @@ chatInput.addEventListener('keydown', (e) => {
 chatInput.addEventListener('input', () => {
   chatInput.style.height = 'auto';
   chatInput.style.height = `${chatInput.scrollHeight}px`;
+
+  // Mentions logic
+  const cursor = chatInput.selectionStart;
+  const text = chatInput.value;
+  const textBeforeCursor = text.slice(0, cursor);
+  
+  // Regex to match @ followed by non-whitespace characters at the end of the string
+  const match = textBeforeCursor.match(/@([^\s]*)$/);
+  
+  if (match) {
+    mentionsState.active = true;
+    mentionsState.query = match[1].toLowerCase();
+    mentionsState.startIndex = match.index;
+    
+    // Fetch files if we haven't already
+    if (workspaceFiles.length === 0) {
+      vscode.postMessage({ type: 'getWorkspaceFiles' });
+    }
+    
+    filterAndRenderMentions();
+  } else {
+    mentionsState.active = false;
+    renderMentionsDropdown();
+  }
 });
+
+function filterAndRenderMentions() {
+  if (!mentionsState.active) return;
+  
+  const query = mentionsState.query;
+  mentionsState.filteredFiles = workspaceFiles
+    .filter(f => f.path.toLowerCase().includes(query) || f.basename.toLowerCase().includes(query))
+    .slice(0, 10); // Show max 10
+    
+  mentionsState.selectedIndex = 0;
+  renderMentionsDropdown();
+}
+
+function renderMentionsDropdown() {
+  if (!mentionsState.active || mentionsState.filteredFiles.length === 0) {
+    mentionsDropdown.classList.add('hidden');
+    mentionsDropdown.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  mentionsState.filteredFiles.forEach((file, index) => {
+    const isActive = index === mentionsState.selectedIndex ? 'active' : '';
+    html += `
+      <div class="mention-item ${isActive}" data-index="${index}">
+        <svg class="mention-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+        <span>${file.basename}</span>
+        <span class="mention-path">${file.path}</span>
+      </div>
+    `;
+  });
+
+  mentionsDropdown.innerHTML = html;
+  mentionsDropdown.classList.remove('hidden');
+
+  // Scroll active item into view
+  const activeItem = mentionsDropdown.querySelector('.active');
+  if (activeItem) {
+    activeItem.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Click handlers
+  mentionsDropdown.querySelectorAll('.mention-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const idx = parseInt(item.dataset.index, 10);
+      addAttachedFile(mentionsState.filteredFiles[idx]);
+    });
+    // Mouse hover updates selected index
+    item.addEventListener('mouseenter', () => {
+      mentionsState.selectedIndex = parseInt(item.dataset.index, 10);
+      renderMentionsDropdown();
+    });
+  });
+}
+
+function addAttachedFile(file) {
+  // Check if already attached
+  if (!attachedFiles.some(f => f.path === file.path)) {
+    attachedFiles.push(file);
+  }
+  
+  // Remove the @query from the input text
+  const text = chatInput.value;
+  const before = text.slice(0, mentionsState.startIndex);
+  const after = text.slice(mentionsState.startIndex + mentionsState.query.length + 1);
+  chatInput.value = before + after;
+  
+  mentionsState.active = false;
+  renderMentionsDropdown();
+  renderAttachmentTags();
+  
+  chatInput.focus();
+}
+
+function removeAttachedFile(path) {
+  attachedFiles = attachedFiles.filter(f => f.path !== path);
+  renderAttachmentTags();
+}
+
+function renderAttachmentTags() {
+  if (attachedFiles.length === 0) {
+    attachmentTagsContainer.classList.add('hidden');
+    attachmentTagsContainer.innerHTML = '';
+    return;
+  }
+  
+  attachmentTagsContainer.classList.remove('hidden');
+  let html = '';
+  
+  attachedFiles.forEach(file => {
+    html += `
+      <div class="attachment-tag">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+        ${file.basename}
+        <span class="attachment-tag-remove" data-path="${file.path}">&times;</span>
+      </div>
+    `;
+  });
+  
+  attachmentTagsContainer.innerHTML = html;
+  
+  attachmentTagsContainer.querySelectorAll('.attachment-tag-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      removeAttachedFile(e.target.dataset.path);
+    });
+  });
+}
 
 function updateToolsToggleVisibility() {
   const model = modelsList.find(m => m.id === selectedModelId);
@@ -788,6 +995,8 @@ function sendMessage() {
   const topP = parseFloat(toppInput.value);
   const systemPrompt = systemPromptInput.value;
 
+  const currentAttachedFiles = [...attachedFiles];
+
   vscode.postMessage({
     type: 'sendMessage',
     messages: [
@@ -796,12 +1005,17 @@ function sendMessage() {
     ],
     includeActiveFile,
     includeWorkspaceMap,
+    attachedFiles: currentAttachedFiles,
     temperature,
     maxTokens,
     topP,
     systemPrompt,
     enableTools: toolsEnabled
   });
+
+  // Clear attached files for the next message
+  attachedFiles = [];
+  renderAttachmentTags();
 }
 
 function handleStreamStart() {
@@ -1127,6 +1341,11 @@ function stopStreaming() {
   if (!isGenerating) return;
   isGenerating = false;
   if (currentAssistantBubble && currentResponseText) {
+    const containers = currentAssistantBubble.querySelectorAll('.response-text');
+    let responseContainer = containers.length > 0 ? containers[containers.length - 1] : null;
+    if (responseContainer) {
+      responseContainer.innerHTML = parseMarkdown(currentResponseText, true);
+    }
     chatHistory.push({ role: 'assistant', content: currentResponseText });
     saveCurrentSession();
   }
@@ -1225,12 +1444,12 @@ function handleTokenizeResult(count) {
   }
 }
 
-function parseMarkdown(text) {
+function parseMarkdown(text, isComplete = false) {
   if (!text) return '';
   let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
   // Parse <think> tags (which are now &lt;think&gt;)
-  html = html.replace(/&lt;think&gt;/gi, '<details class="think-block" open><summary>Thinking...</summary><div class="think-content">')
+  html = html.replace(/&lt;think&gt;/gi, `<details class="think-block" ${isComplete ? '' : 'open'}><summary>Thinking...</summary><div class="think-content">`)
              .replace(/&lt;\/think&gt;/gi, '</div></details>');
 
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
@@ -1283,4 +1502,126 @@ function handleTokenUsage(msg) {
       usageLabel.style.color = 'var(--text-muted)';
     }
   }
+}
+
+// ─── Tool Configuration Modal ───────────────────────────────────────────────
+
+function renderToolConfigModal(categories, disabledTools) {
+  if (!toolConfigModal || !toolConfigBody) return;
+
+  const disabledSet = new Set(disabledTools || []);
+  let totalTools = 0;
+  let enabledTools = 0;
+
+  let html = '';
+  
+  for (const category of categories) {
+    const allDisabled = category.tools.every(t => disabledSet.has(t));
+    const someDisabled = category.tools.some(t => disabledSet.has(t));
+    const categoryChecked = !allDisabled;
+    const categoryIndeterminate = someDisabled && !allDisabled;
+
+    html += `
+      <div class="tool-config-category">
+        <div class="tool-config-category-header">
+          <label class="tool-config-checkbox-label">
+            <input type="checkbox" class="tool-config-category-checkbox" data-category="${category.id}" 
+              ${categoryChecked ? 'checked' : ''} ${categoryIndeterminate ? 'data-indeterminate="true"' : ''}>
+            <span class="tool-config-category-icon">${category.icon}</span>
+            <span class="tool-config-category-name">${category.name}</span>
+          </label>
+          <span class="tool-config-category-desc">${category.description}</span>
+        </div>
+        <div class="tool-config-tools">
+    `;
+
+    for (const toolName of category.tools) {
+      totalTools++;
+      const isEnabled = !disabledSet.has(toolName);
+      if (isEnabled) enabledTools++;
+
+      const displayName = toolName.replace(/_/g, ' ');
+      html += `
+        <label class="tool-config-tool-label">
+          <input type="checkbox" class="tool-config-tool-checkbox" data-tool="${toolName}" data-category="${category.id}" ${isEnabled ? 'checked' : ''}>
+          <span class="tool-config-tool-name">${displayName}</span>
+        </label>
+      `;
+    }
+
+    html += `
+        </div>
+      </div>
+    `;
+  }
+
+  toolConfigBody.innerHTML = html;
+
+  // Update count label
+  if (toolsConfigCount) {
+    toolsConfigCount.textContent = `${enabledTools}/${totalTools} Tools`;
+  }
+
+  // Show the modal
+  toolConfigModal.classList.remove('hidden');
+
+  // Set indeterminate state for category checkboxes
+  toolConfigBody.querySelectorAll('[data-indeterminate="true"]').forEach(cb => {
+    cb.indeterminate = true;
+  });
+
+  // Category checkbox click handler
+  toolConfigBody.querySelectorAll('.tool-config-category-checkbox').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const categoryId = e.target.dataset.category;
+      const isChecked = e.target.checked;
+      toolConfigBody.querySelectorAll(`.tool-config-tool-checkbox[data-category="${categoryId}"]`).forEach(toolCb => {
+        toolCb.checked = isChecked;
+      });
+      saveToolConfig();
+    });
+  });
+
+  // Individual tool checkbox click handler
+  toolConfigBody.querySelectorAll('.tool-config-tool-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      // Update category checkbox state
+      const categoryId = cb.dataset.category;
+      const categoryTools = toolConfigBody.querySelectorAll(`.tool-config-tool-checkbox[data-category="${categoryId}"]`);
+      const categoryCb = toolConfigBody.querySelector(`.tool-config-category-checkbox[data-category="${categoryId}"]`);
+      const allChecked = [...categoryTools].every(t => t.checked);
+      const someChecked = [...categoryTools].some(t => t.checked);
+      
+      if (categoryCb) {
+        categoryCb.checked = allChecked;
+        categoryCb.indeterminate = someChecked && !allChecked;
+      }
+      saveToolConfig();
+    });
+  });
+}
+
+function saveToolConfig() {
+  if (!toolConfigBody) return;
+  
+  const disabledTools = [];
+  let totalTools = 0;
+  let enabledTools = 0;
+
+  toolConfigBody.querySelectorAll('.tool-config-tool-checkbox').forEach(cb => {
+    totalTools++;
+    if (!cb.checked) {
+      disabledTools.push(cb.dataset.tool);
+    } else {
+      enabledTools++;
+    }
+  });
+
+  // Update count label
+  if (toolsConfigCount) {
+    toolsConfigCount.textContent = `${enabledTools}/${totalTools} Tools`;
+  }
+
+  // Send to backend
+  vscode.postMessage({ type: 'updateDisabledTools', disabledTools });
 }

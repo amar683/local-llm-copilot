@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as path from 'path';
+import * as fs from 'fs';
 import { ServerController } from './serverController';
-import { TOOL_DEFINITIONS, AGENTIC_SYSTEM_PROMPT } from './toolDefinitions';
-import { executeToolCall } from './toolExecutor';
+import { TOOL_DEFINITIONS, TOOL_CATEGORIES, AGENTIC_SYSTEM_PROMPT } from './toolDefinitions';
+import { executeToolCall, initTools } from './toolExecutor';
 
 /** Maximum number of tool-call iterations per user turn */
 const MAX_TOOL_ITERATIONS = 10;
@@ -25,13 +26,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private abortRequested = false;
   // Keyed by file path (fsPath), stores the original content before any edits in this turn.
   private turnFileBackups: Map<string, { uri: vscode.Uri, originalContent: string, addedLines: number, removedLines: number }> = new Map();
+  private disabledTools: Set<string> = new Set();
 
   private currentSessionId: string = '';
 
   constructor(
     private readonly _context: vscode.ExtensionContext,
     private readonly serverController: ServerController
-  ) {}
+  ) {
+    // Initialize tool modules that need the extension context
+    initTools(_context);
+    // Load disabled tools from settings
+    this.disabledTools = new Set(
+      _context.globalState.get<string[]>('localLlm.disabledTools') || []
+    );
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -123,6 +132,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             data.messages,
             data.includeActiveFile,
             data.includeWorkspaceMap,
+            data.attachedFiles,
             data.temperature,
             data.maxTokens,
             data.topP,
@@ -212,6 +222,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         case 'deleteModel':
           await this.deleteModel(data.modelId);
+          break;
+
+        // ─── Tool Configuration Messages ─────────────────────────────
+        case 'getToolConfig':
+          this._view?.webview.postMessage({
+            type: 'toolConfig',
+            categories: TOOL_CATEGORIES,
+            disabledTools: Array.from(this.disabledTools)
+          });
+          break;
+
+        case 'updateDisabledTools':
+          this.disabledTools = new Set(data.disabledTools || []);
+          this._context.globalState.update('localLlm.disabledTools', Array.from(this.disabledTools));
+          break;
+          
+        // ─── Mentions & Attachments ──────────────────────────────────
+        case 'getWorkspaceFiles':
+          try {
+            // Find all files in the workspace excluding common ignores
+            const excludePattern = '**/{node_modules,.git,dist,out,build,.next,coverage}/**';
+            const files = await vscode.workspace.findFiles('**/*', excludePattern, 1000); // Limit to 1000 files to keep it snappy
+            
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!workspaceRoot) {
+              this._view?.webview.postMessage({ type: 'workspaceFiles', files: [] });
+              break;
+            }
+
+            // Convert to relative paths
+            const relativePaths = files.map(file => {
+              const relative = path.relative(workspaceRoot, file.fsPath);
+              const basename = path.basename(relative);
+              return { path: relative, basename };
+            });
+
+            this._view?.webview.postMessage({ type: 'workspaceFiles', files: relativePaths });
+          } catch (e) {
+            console.error('Error fetching workspace files:', e);
+            this._view?.webview.postMessage({ type: 'workspaceFiles', files: [] });
+          }
           break;
       }
     });
@@ -489,6 +540,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     messages: any[],
     includeActiveFile: boolean,
     includeWorkspaceMap: boolean,
+    attachedFiles?: any[],
     temperature?: number,
     maxTokens?: number,
     topP?: number,
@@ -589,6 +641,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
           const originalContent = enrichedMessages[lastIdx].content;
           enrichedMessages[lastIdx].content = `[Workspace files list for project "${workspaceName}"]:\n${fileListStr}\n\n${originalContent}`;
+        }
+      }
+    }
+
+    // 4. Process user-attached files via @ mentions
+    if (attachedFiles && attachedFiles.length > 0) {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (workspaceRoot) {
+        let attachmentsStr = '';
+        for (const file of attachedFiles) {
+          try {
+            const absPath = path.join(workspaceRoot, file.path);
+            const content = await fs.promises.readFile(absPath, 'utf8');
+            const lines = content.split('\n');
+            const isTruncated = lines.length > 1000;
+            const textToInclude = isTruncated ? lines.slice(0, 1000).join('\n') + `\n\n// [... truncated remaining ${lines.length - 1000} lines ...]`: content;
+            
+            attachmentsStr += `[Attached File: "${file.path}"]\n\`\`\`\n${textToInclude}\n\`\`\`\n\n`;
+          } catch (e) {
+            console.error(`Failed to read attached file: ${file.path}`, e);
+          }
+        }
+        
+        if (attachmentsStr) {
+          const lastIdx = enrichedMessages.length - 1;
+          if (lastIdx >= 0 && enrichedMessages[lastIdx].role === 'user') {
+            const originalContent = enrichedMessages[lastIdx].content;
+            enrichedMessages[lastIdx].content = `${attachmentsStr}Question:\n${originalContent}`;
+          }
         }
       }
     }
@@ -761,7 +842,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       };
 
       if (useTools) {
-        postBody.tools = TOOL_DEFINITIONS;
+        postBody.tools = TOOL_DEFINITIONS.filter(t => !this.disabledTools.has(t.function.name));
         postBody.tool_choice = 'auto';
       }
 
@@ -1100,13 +1181,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 3px;"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
                   <span>Agent Tools</span>
                 </button>
+                <button class="context-toggle-btn tools-config-btn" id="configure-tools-btn" title="Configure which tools are available" style="display: none;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                  <span id="tools-config-count">17 Tools</span>
+                </button>
+              </div>
+
+              <!-- Tool Configuration Modal -->
+              <div id="tool-config-modal" class="tool-config-modal hidden">
+                <div class="tool-config-header">
+                  <span class="tool-config-title">Configure Tools</span>
+                  <button id="tool-config-close" class="tool-config-close-btn">&times;</button>
+                </div>
+                <div class="tool-config-body" id="tool-config-body">
+                  <!-- Populated dynamically -->
+                </div>
               </div>
 
               <!-- Dedicated container for the worktree review block -->
               <div id="worktree-container"></div>
 
+              <div id="attachment-tags" class="attachment-tags hidden"></div>
+              
               <div class="tokenizer-row">
-                <textarea id="chat-input" placeholder="Type a message..." rows="1" disabled></textarea>
+                <textarea id="chat-input" placeholder="Type a message... (Type @ to attach files)" rows="1" disabled></textarea>
+                <div id="mentions-dropdown" class="mentions-dropdown hidden"></div>
               </div>
               <div class="action-buttons">
                 <button class="token-count-btn" id="token-count-btn" title="Count tokens in current input" disabled>
