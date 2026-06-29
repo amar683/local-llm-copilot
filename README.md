@@ -7,8 +7,11 @@ Start your local `llama.cpp` model servers directly from VS Code and chat with t
 - **Integrated Server Lifecycle:** Automatically starts and stops your `llama-server` process in a dedicated VS Code terminal (`Llama.cpp Server`) when you select a model.
 - **Auto-Kill Previous Models:** Sends a `Ctrl+C` command to terminate the active model server before spinning up a new one to avoid port conflicts and memory leaks.
 - **Health Polling:** Monitors the model loading progress (showing percentage status) before enabling chat inputs.
-- **Premium Chat UI:** Includes a beautiful dark-mode chat panel with code syntax highlighting, copy-to-clipboard buttons, streaming responses, and context history.
-- **Highly Configurable:** Customize model names, executable paths, GPU layers, context sizes, and ports directly inside your standard VS Code `settings.json`.
+- **Autonomous Agent Mode 🤖:** Provide a high-level goal and watch the agent create a multi-step plan, track progress, maintain a scratchpad in memory, and autonomously read/edit files to achieve the result.
+- **Tool Calling (Function Calling):** Extensible tool ecosystem allowing the LLM to inspect directories, view files, edit code, run semantic searches, and more.
+- **Premium Chat UI & Animations:** Includes a beautiful dark-mode chat panel with responsive layout, code syntax highlighting, copy-to-clipboard buttons, streaming responses, glowing action buttons, and live pulsing animations for agent progress.
+- **Rich Context Integration:** Easily attach the active file, workspace overview, or use the semantic search tool to pull relevant codebase snippets directly into your context window.
+- **Highly Configurable:** Customize model names, executable paths, GPU layers, context sizes, and ports directly inside your standard VS Code `settings.json`, or via the built-in UI settings panel.
 
 ## Installation
 
