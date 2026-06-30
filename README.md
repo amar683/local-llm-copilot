@@ -9,7 +9,12 @@ Start your local `llama.cpp` model servers directly from VS Code and chat with t
 - **Health Polling:** Monitors the model loading progress (showing percentage status) before enabling chat inputs.
 - **Autonomous Agent Mode 🤖:** Provide a high-level goal and watch the agent create a multi-step plan, track progress, maintain a scratchpad in memory, and autonomously read/edit files to achieve the result.
 - **Tool Calling (Function Calling):** Extensible tool ecosystem allowing the LLM to inspect directories, view files, edit code, run semantic searches, and more.
-- **Premium Chat UI & Animations:** Includes a beautiful dark-mode chat panel with responsive layout, code syntax highlighting, copy-to-clipboard buttons, streaming responses, glowing action buttons, and live pulsing animations for agent progress.
+- **Inline Editing & Chat (Ctrl+I):** Select code and press `Ctrl+I` (`Cmd+I` on Mac) to bring up the inline chat interface. The LLM edits the code directly in your editor, and you can easily **Accept** or **Reject** the changes.
+- **AI Hover Summaries:** Hover over any class, function, or symbol in your code to get instant, AI-generated explanations using your local model. (Can be toggled via settings).
+- **Semantic Codebase Search:** Index your entire workspace locally. Use the `Local LLM: Index Codebase` command and let the LLM automatically retrieve the most relevant code chunks for your queries without hitting any external API.
+- **Quick Actions (Context Menus & Code Actions):** Right-click or use lightbulb quick actions to instantly **Explain this code** or **Fix this error** based on editor diagnostics.
+- **Multimodal / Vision Support:** Configure a multimodal projector (`mmprojPath`) to allow models to analyze images and screenshots!
+- **Premium Chat UI & Animations:** Includes a beautiful dark-mode chat panel with responsive layout, code syntax highlighting, copy-to-clipboard buttons, clear chat history, streaming responses, glowing action buttons, and live pulsing animations for agent progress.
 - **Rich Context Integration:** Easily attach the active file, workspace overview, or use the semantic search tool to pull relevant codebase snippets directly into your context window.
 - **Highly Configurable:** Customize model names, executable paths, GPU layers, context sizes, and ports directly inside your standard VS Code `settings.json`, or via the built-in UI settings panel.
 
